@@ -1,96 +1,33 @@
-# Warp Proxy Manager Configuration
-
 manager:
   api_port: 8080
-  log_level: info  # debug | info | warn | error
+  log_level: info
 
 proxy:
   listen: ":1080"
   auth:
-    enabled: true
-    users:
-      # Password: admin123 (bcrypt hash)
-      - user: "admin"
-        pass: "$2a$10$rDkMvwFGlFdJwtLhLPbZme6WlSTFqwYrHMOk0Qg8.mE/V5Fm.n2Gu"
+    enabled: false
+    users: []
   timeout:
     connect: 5s
     idle: 30s
 
 scaling:
-  min: 1
+  min: 3
   max: 10
   cooldown: 60s
-  
-  triggers:
-    # Scale based on active connections
-    - name: high-connections
-      type: connection
-      enabled: true
-      threshold: 100       # connections per container
-      window: 30s
-      scale_direction: up
-      scale_count: 1
-      cooldown: 120s
-    
-    # Scale down when connections are low
-    - name: low-connections
-      type: connection
-      enabled: true
-      threshold: 20
-      window: 60s
-      scale_direction: down
-      scale_count: 1
-      cooldown: 180s
-    
-    # Scale up on 429 (rate limit)
-    - name: rate-limit
-      type: response_code
-      enabled: true
-      response_code: 429
-      threshold: 10         # 10x 429 in window
-      window: 60s
-      scale_direction: up
-      scale_count: 1
-      cooldown: 120s
-    
-    # Scale up on 502 (bad gateway)
-    - name: server-error
-      type: response_code
-      enabled: true
-      response_code: 502
-      threshold: 5
-      window: 30s
-      scale_direction: up
-      scale_count: 2
-      cooldown: 180s
-    
-    # Scale on high latency
-    - name: high-latency
-      type: latency
-      enabled: true
-      threshold: 200        # ms
-      window: 30s
-      scale_direction: up
-      scale_count: 1
-      cooldown: 120s
+  triggers: []
 
 loadbalancer:
-  algorithm: roundrobin  # roundrobin | leastconn | iphash
+  algorithm: roundrobin
   health_check:
-    enabled: true
-    interval: 10s
-    timeout: 5s
-    unhealthy_threshold: 3
+    enabled: false
 
 docker:
   image: "ghcr.io/lowkruc/warp-proxy:latest"
   network: "warp-net"
-  prefix: "warp"
-  volumes:
-    warp: "/var/lib/cloudflare-warp"  # Named volume, not bind mount
+  prefix: "warp-proxy"
+  memory_limit: "150m"
+  cpu_limit: "0.1"
   env:
-    WARP_SLEEP: "3"
-    WARP_WAIT_IFACE: "1"
-  resources:
-    memory: "100m"
-    cpus: "0.5"
+    WARP_SLEEP: "5"
+    WARP_ROTATION_INTERVAL: "60"

@@ -81,17 +81,13 @@ type HealthCheckConfig struct {
 }
 
 type DockerConfig struct {
-	Image     string            `yaml:"image"`
-	Network   string            `yaml:"network"`
-	Prefix    string            `yaml:"prefix"`
-	Volumes   map[string]string `yaml:"volumes"`
-	Env       map[string]string `yaml:"env"`
-	Resources ResourcesConfig   `yaml:"resources"`
-}
-
-type ResourcesConfig struct {
-	Memory string `yaml:"memory"`
-	CPUs   string `yaml:"cpus"`
+	Image       string            `yaml:"image"`
+	Network     string            `yaml:"network"`
+	Prefix      string            `yaml:"prefix"`
+	MemoryLimit string            `yaml:"memory_limit"`
+	CPULimit    string            `yaml:"cpu_limit"`
+	Volumes     map[string]string `yaml:"volumes"`
+	Env         map[string]string `yaml:"env"`
 }
 
 func Load(path string) (*Config, error) {

@@ -39,13 +39,18 @@ type ContainerCreateResponse struct {
 }
 
 type ContainerListResponse struct {
-	ID      string            `json:"Id"`
-	Names   []string          `json:"Names"`
-	State   string            `json:"State"`
-	Status  string            `json:"Status"`
-	Ports   []PortBinding     `json:"Ports"`
-	Created int64             `json:"Created"`
-	Labels  map[string]string `json:"Labels"`
+	ID              string            `json:"Id"`
+	Names           []string          `json:"Names"`
+	State           string            `json:"State"`
+	Status          string            `json:"Status"`
+	Ports           []PortBinding     `json:"Ports"`
+	Created         int64             `json:"Created"`
+	Labels          map[string]string `json:"Labels"`
+	NetworkSettings ContainerNetwork  `json:"NetworkSettings"`
+}
+
+type ContainerNetwork struct {
+	Networks map[string]NetworkInfo `json:"Networks"`
 }
 
 type PortBinding struct {
@@ -122,7 +127,22 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		var errMsg struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(bodyBytes, &errMsg) == nil && errMsg.Message != "" {
+			return nil, fmt.Errorf("docker API %s %s: %d %s", method, path, resp.StatusCode, errMsg.Message)
+		}
+		return nil, fmt.Errorf("docker API %s %s: %d %s", method, path, resp.StatusCode, string(bodyBytes))
+	}
+
+	return bodyBytes, nil
 }
 
 func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerInfo, error) {
@@ -140,14 +160,6 @@ func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerIn
 	env := make([]string, 0, len(c.config.Docker.Env))
 	for k, v := range c.config.Docker.Env {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	containerConfig := map[string]interface{}{
-		"Image": c.config.Docker.Image,
-		"Env":   env,
-		"ExposedPorts": map[string]interface{}{
-			"1080/tcp": struct{}{},
-		},
 	}
 
 	hostConfig := map[string]interface{}{
@@ -169,6 +181,23 @@ func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerIn
 			"net.ipv6.conf.all.disable_ipv6":  "0",
 			"net.ipv4.conf.all.src_valid_mark": "1",
 		},
+		"Privileged": true,
+	}
+
+	// Add memory limit if configured
+	if c.config.Docker.MemoryLimit != "" {
+		memBytes, err := parseMemory(c.config.Docker.MemoryLimit)
+		if err == nil {
+			hostConfig["Memory"] = memBytes
+		}
+	}
+
+	// Add CPU limit if configured
+	if c.config.Docker.CPULimit != "" {
+		cpuFloat, err := strconv.ParseFloat(c.config.Docker.CPULimit, 64)
+		if err == nil {
+			hostConfig["NanoCPUs"] = int64(cpuFloat * 1e9)
+		}
 	}
 
 	networkConfig := map[string]interface{}{
@@ -178,7 +207,9 @@ func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerIn
 	}
 
 	body := map[string]interface{}{
-		"ContainerConfig": containerConfig,
+		"Image":           c.config.Docker.Image,
+		"Env":             env,
+		"ExposedPorts":    map[string]interface{}{"1080/tcp": struct{}{}},
 		"HostConfig":      hostConfig,
 		"NetworkingConfig": networkConfig,
 	}
@@ -203,7 +234,7 @@ func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerIn
 	}
 
 	return &ContainerInfo{
-		ID:        createResp.ID[:12],
+		ID:        truncateID(createResp.ID),
 		Name:      name,
 		Status:    "starting",
 		Port:      port,
@@ -246,11 +277,21 @@ func (c *Client) ListContainers(ctx context.Context) ([]*ContainerInfo, error) {
 			port = cont.Ports[0].PublicPort
 		}
 
+		// Get IP from network settings
+		ip := ""
+		for _, network := range cont.NetworkSettings.Networks {
+			if network.IPAddress != "" {
+				ip = network.IPAddress
+				break
+			}
+		}
+
 		info := &ContainerInfo{
-			ID:        cont.ID[:12],
+			ID:        truncateID(cont.ID),
 			Name:      name,
 			Status:    cont.State,
 			Port:      port,
+			IP:        ip,
 			StartedAt: time.Unix(cont.Created, 0),
 		}
 		result = append(result, info)
@@ -286,7 +327,7 @@ func (c *Client) GetContainer(ctx context.Context, id string) (*ContainerInfo, e
 	}
 
 	return &ContainerInfo{
-		ID:        cont.ID[:12],
+		ID:        truncateID(cont.ID),
 		Name:      strings.TrimPrefix(cont.Name, "/"),
 		Status:    cont.State.Status,
 		Port:      port,
@@ -359,4 +400,49 @@ func (c *Client) GetContainerLogs(ctx context.Context, id string, tail int) (str
 
 func (c *Client) Close() error {
 	return nil
+}
+
+func truncateID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+func parseMemory(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	s = strings.ToUpper(s)
+
+	var num float64
+	var unit string
+
+	// Parse number and unit
+	for i, c := range s {
+		if c == 'K' || c == 'M' || c == 'G' {
+			num, _ = strconv.ParseFloat(s[:i], 64)
+			unit = s[i:]
+			break
+		}
+	}
+	if unit == "" {
+		num, _ = strconv.ParseFloat(s, 64)
+		return int64(num), nil
+	}
+
+	switch unit {
+	case "K":
+		return int64(num * 1024), nil
+	case "KB":
+		return int64(num * 1024), nil
+	case "M":
+		return int64(num * 1024 * 1024), nil
+	case "MB":
+		return int64(num * 1024 * 1024), nil
+	case "G":
+		return int64(num * 1024 * 1024 * 1024), nil
+	case "GB":
+		return int64(num * 1024 * 1024 * 1024), nil
+	default:
+		return 0, fmt.Errorf("unknown unit: %s", unit)
+	}
 }

@@ -39,6 +39,15 @@ func (lb *LoadBalancer) AddBackend(id, name, address string, port int) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
+	// Check if already exists
+	for _, b := range lb.backends {
+		if b.ID == id {
+			b.Address = address
+			b.Port = port
+			return
+		}
+	}
+
 	lb.backends = append(lb.backends, &Backend{
 		ID:      id,
 		Name:    name,
@@ -46,6 +55,43 @@ func (lb *LoadBalancer) AddBackend(id, name, address string, port int) {
 		Port:    port,
 		Healthy: true,
 	})
+}
+
+func (lb *LoadBalancer) SyncBackends(backends []struct{ ID, Name, Address string; Port int }) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+
+	existing := make(map[string]bool)
+	for _, newB := range backends {
+		existing[newB.ID] = true
+		found := false
+		for _, b := range lb.backends {
+			if b.ID == newB.ID {
+				b.Address = newB.Address
+				b.Port = newB.Port
+				found = true
+				break
+			}
+		}
+		if !found {
+			lb.backends = append(lb.backends, &Backend{
+				ID:      newB.ID,
+				Name:    newB.Name,
+				Address: newB.Address,
+				Port:    newB.Port,
+				Healthy: true,
+			})
+		}
+	}
+
+	// Remove backends not in the list
+	filtered := lb.backends[:0]
+	for _, b := range lb.backends {
+		if existing[b.ID] {
+			filtered = append(filtered, b)
+		}
+	}
+	lb.backends = filtered
 }
 
 func (lb *LoadBalancer) RemoveBackend(id string) {

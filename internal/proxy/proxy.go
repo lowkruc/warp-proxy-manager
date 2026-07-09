@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -227,20 +226,22 @@ func (ps *ProxyServer) tryBackend(clientConn net.Conn, req *socks5Request, backe
 	}()
 
 	// Forward SOCKS5 handshake to backend
+	log.Printf("[PROXY] Forwarding handshake to backend %s", backend.Address)
 	if err := ps.forwardHandshake(clientConn, backendConn); err != nil {
+		log.Printf("[PROXY] Handshake to backend failed: %v", err)
 		return 0, err
 	}
+	log.Printf("[PROXY] Handshake to backend OK")
 
 	// Forward request
+	log.Printf("[PROXY] Forwarding request to backend")
 	if err := ps.forwardRequest(clientConn, backendConn, req); err != nil {
+		log.Printf("[PROXY] Request forwarding failed: %v", err)
 		return 0, err
 	}
+	log.Printf("[PROXY] Request forwarded OK")
 
-	// Read response (we need to check if it's 429)
-	// For SOCKS5, the response code is in the reply
-	// But for HTTP through SOCKS5, we'd need to parse HTTP response
-	// For simplicity, we'll consider SOCKS5 success as200
-
+	log.Printf("[PROXY] Sending success to client")
 	// Send success to client
 	if err := ps.sendSuccess(clientConn); err != nil {
 		return 0, err
@@ -253,35 +254,23 @@ func (ps *ProxyServer) tryBackend(clientConn net.Conn, req *socks5Request, backe
 }
 
 func (ps *ProxyServer) forwardHandshake(clientConn, backendConn net.Conn) error {
-	// Read client handshake
-	buf := make([]byte, 2)
-	if _, err := io.ReadFull(clientConn, buf); err != nil {
-		return err
-	}
-
-	// Forward to backend
-	if _, err := backendConn.Write(buf); err != nil {
-		return err
-	}
-
-	// Read methods
-	methods := make([]byte, buf[1])
-	if _, err := io.ReadFull(clientConn, methods); err != nil {
-		return err
-	}
-	if _, err := backendConn.Write(methods); err != nil {
-		return err
+	// Do fresh SOCKS5 handshake with backend (no auth)
+	// Send: version 5, 1 method, no-auth
+	_, err := backendConn.Write([]byte{socks5Version, 0x01, socks5AuthNone})
+	if err != nil {
+		return fmt.Errorf("send handshake to backend: %w", err)
 	}
 
 	// Read backend response
 	resp := make([]byte, 2)
 	if _, err := io.ReadFull(backendConn, resp); err != nil {
-		return err
+		return fmt.Errorf("read backend handshake: %w", err)
 	}
-
-	// Forward to client
-	if _, err := clientConn.Write(resp); err != nil {
-		return err
+	if resp[0] != socks5Version {
+		return fmt.Errorf("backend bad version: %x", resp[0])
+	}
+	if resp[1] != socks5AuthNone {
+		return fmt.Errorf("backend rejected auth method: %x", resp[1])
 	}
 
 	return nil
@@ -313,15 +302,22 @@ func (ps *ProxyServer) forwardRequest(clientConn, backendConn net.Conn, req *soc
 	buf = append(buf, portBytes...)
 
 	// Send to backend
+	log.Printf("[PROXY] Sending CONNECT to backend: %x", buf)
 	if _, err := backendConn.Write(buf); err != nil {
 		return err
 	}
 
+	log.Printf("[PROXY] Sent CONNECT to backend, waiting for reply...")
+
 	// Read backend reply
 	reply := make([]byte, 10)
+	backendConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.ReadFull(backendConn, reply); err != nil {
+		log.Printf("[PROXY] Read reply failed: %v", err)
 		return err
 	}
+	backendConn.SetReadDeadline(time.Time{})
+	log.Printf("[PROXY] Backend reply: %x", reply)
 
 	// Check reply code
 	if reply[1] != socks5RepSuccess {
@@ -520,6 +516,8 @@ func (ps *ProxyServer) proxy(clientConn, backendConn net.Conn) {
 		done <- struct{}{}
 	}()
 
+	// Wait for both directions
+	<-done
 	<-done
 }
 
@@ -535,9 +533,9 @@ func (ps *ProxyServer) GetStats() *ProxyStats {
 }
 
 func isIPv4(addr string) bool {
-	return strings.Count(addr, ":") == 0
+	return net.ParseIP(addr) != nil && net.ParseIP(addr).To4() != nil
 }
 
 func isIPv6(addr string) bool {
-	return strings.Contains(addr, ":")
+	return net.ParseIP(addr) != nil && net.ParseIP(addr).To4() == nil
 }

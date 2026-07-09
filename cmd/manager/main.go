@@ -133,6 +133,9 @@ func main() {
 	// Ensure minimum containers
 	ensureMinimumContainers(dockerClient, cfg)
 
+	// Start container sync loop
+	go syncContainersLoop(context.Background(), dockerClient, balancer)
+
 	log.Printf("[MAIN] Warp Proxy Manager started successfully")
 	log.Printf("[MAIN] Proxy: %s", cfg.Proxy.Listen)
 	log.Printf("[MAIN] API: %s", apiAddr)
@@ -158,6 +161,49 @@ func main() {
 	}
 
 	log.Printf("[MAIN] Shutdown complete")
+}
+
+func syncContainersLoop(ctx context.Context, dockerClient *docker.Client, balancer *proxy.LoadBalancer) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			syncContainers(ctx, dockerClient, balancer)
+		}
+	}
+}
+
+func syncContainers(ctx context.Context, dockerClient *docker.Client, balancer *proxy.LoadBalancer) {
+	containers, err := dockerClient.ListContainers(ctx)
+	if err != nil {
+		return
+	}
+
+	var backends []struct {
+		ID, Name, Address string
+		Port              int
+	}
+
+	for _, c := range containers {
+		if c.Status != "running" || c.IP == "" {
+			continue
+		}
+		backends = append(backends, struct {
+			ID, Name, Address string
+			Port              int
+		}{
+			ID:      c.ID,
+			Name:    c.Name,
+			Address: fmt.Sprintf("%s:1080", c.IP),
+			Port:    1080,
+		})
+	}
+
+	balancer.SyncBackends(backends)
 }
 
 func ensureMinimumContainers(dockerClient *docker.Client, cfg *config.Config) {

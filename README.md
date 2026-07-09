@@ -1,317 +1,159 @@
 # Warp Proxy Manager
 
-Dynamic load balancer & manager for warp-proxy containers.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    warp-proxy-manager                            │
-│                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │  SOCKS5     │  │  REST API   │  │  Prometheus │            │
-│  │  Proxy      │  │  (gin)      │  │  Metrics    │            │
-│  │  :1080      │  │  :8080      │  │  /metrics   │            │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘            │
-│         │                │                │                     │
-│         └────────────────┼────────────────┘                     │
-│                          │                                      │
-│                    ┌─────▼─────┐                                │
-│                    │  Core     │                                │
-│                    └─────┬─────┘                                │
-│                          │                                      │
-│    ┌─────────────────────┼─────────────────────┐               │
-│    │                     │                     │                │
-│ ┌──▼──┐             ┌───▼───┐            ┌───▼───┐           │
-│ │Load │             │Scaler │            │Health │            │
-│ │Balnc│             │       │            │Check  │            │
-│ └──┬──┘             └───┬───┘            └───┬───┘           │
-│    │                    │                     │                │
-│    └────────────────────┼─────────────────────┘               │
-│                         │                                      │
-└─────────────────────────┼──────────────────────────────────────┘
-                          │
-                   ┌──────▼──────┐
-                   │   Docker    │
-                   └──────┬──────┘
-                          │
-    ┌─────────────────────┼─────────────────────┐
-    │                     │                     │
-┌───▼───┐           ┌────▼────┐           ┌───▼───┐
-│warp-1 │           │ warp-2  │           │warp-N │
-│:1081  │           │ :1082   │           │:10XX  │
-└───────┘           └─────────┘           └───────┘
-```
+Dynamic load balancer and manager for [warp-docker](https://github.com/lowkruc/warp-docker) containers. Auto-scaling, SOCKS5 proxy, REST API, and Docker deployment.
 
 ## Features
 
-- **SOCKS5 Proxy** - With username/password authentication
-- **Load Balancing** - Round-robin, least-connections, IP-hash
-- **Auto Scaling** - Based on connections or response codes (429, 502, etc.)
+- **SOCKS5 Proxy** - Forward proxy with load balancing
+- **Auto-Scaling** - Scale containers based on connection count or response codes (429, 5xx)
 - **Health Checking** - Automatic backend health monitoring
-- **REST API** - Full management API
-- **Prometheus Metrics** - /metrics/prometheus endpoint
-- **Metrics History** - SQLite storage for historical data
-- **Graceful Shutdown** - Proper cleanup on exit
-- **Alerting** - Webhook notifications for events
-- **Rolling Updates** - Zero-downtime container updates
-- **CLI Tool** - `warpctl` for easy management
+- **Load Balancing** - Round-robin, least connections, or IP hash
+- **REST API** - Full API with OpenAPI spec
+- **Prometheus Metrics** - Export metrics for monitoring
+- **Rolling Updates** - Update backends without downtime
+- **Docker Management** - Auto-create and manage warp-proxy containers
 
 ## Quick Start
 
-### Build
-
 ```bash
-make all  # Build both manager and CLI
-```
-
-### Run
-
-```bash
-# With config
-make run
-
-# Dev mode (no build)
-make dev
-```
-
-### Docker Compose (Recommended)
-
-```bash
-# Copy and edit config
-cp config.example.yaml config.yaml
-nano config.yaml
-
-# Build and run
+# Clone and run
+git clone https://github.com/lowkruc/warp-proxy-manager.git
+cd warp-proxy-manager
 docker compose up -d
-
-# Check logs
-docker compose logs -f
-
-# Stop
-docker compose down
-```
-
-### Docker Manual
-
-```bash
-# Build
-docker build -t warp-proxy-manager .
-
-# Run
-docker run -d \
-  --name warp-manager \
-  -p 1080:1080 \
-  -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  warp-proxy-manager
-```
-
-### CLI Tool
-
-```bash
-# Build CLI
-make build-cli
-
-# Or use Docker
-alias warpctl='docker run --rm --network host -e WARP_MANAGER_HOST=localhost warp-proxy-manager warpctl'
-
-# Commands
-warpctl status
-warpctl containers
-warpctl scale 5
-warpctl health
-warpctl create
-warpctl restart <id>
-warpctl delete <id>
-warpctl history
 ```
 
 ## Configuration
 
-See `config.example.yaml` for full configuration.
+Copy and edit config file:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+### Config Reference
 
 ```yaml
 manager:
-  api_port: 8080
-  log_level: info
+  api_port: 8080                    # REST API port
+  log_level: info                   # debug, info, warn, error
 
 proxy:
-  listen: ":1080"
+  listen: ":1080"                   # SOCKS5 proxy listen address
   auth:
-    enabled: true
+    enabled: false                  # Enable SOCKS5 authentication
     users:
-      - user: "admin"
-        pass: "password"
+      - username: admin
+        password: admin123
   timeout:
-    connect: 5s
-    idle: 30s
+    connect: 5s                     # Backend connection timeout
+    idle: 30s                       # Idle connection timeout
 
 scaling:
-  min: 1
-  max: 10
-  cooldown: 60s
-  triggers:
-    - name: rate-limit
-      type: response_code
-      response_code: 429
-      threshold: 10
-      window: 60s
-      scale_direction: up
-      scale_count: 1
-      cooldown: 120s
+  min: 3                            # Minimum containers
+  max: 10                           # Maximum containers
+  cooldown: 60s                     # Cooldown between scaling actions
+  triggers: []                      # Custom scaling triggers
 
 loadbalancer:
-  algorithm: roundrobin  # roundrobin | leastconn | iphash
+  algorithm: roundrobin             # roundrobin, leastconn, iphash
   health_check:
-    enabled: true
-    interval: 10s
-    timeout: 5s
+    enabled: false
 
 docker:
   image: "ghcr.io/lowkruc/warp-proxy:latest"
   network: "warp-net"
+  prefix: "warp-proxy"
+  memory_limit: "150m"              # Container memory limit
+  cpu_limit: "0.1"                  # Container CPU limit (0.1 = 10%)
+  env:
+    WARP_SLEEP: "5"                 # Startup delay
+    WARP_ROTATION_INTERVAL: "60"    # IP rotation interval (minutes)
 ```
 
-## API Reference
+## Usage
 
-### Proxy
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/v1/proxy/stats | Proxy statistics |
-| GET | /api/v1/proxy/connections | Active connections |
-
-### Containers
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/v1/containers | List containers |
-| GET | /api/v1/containers/:id | Get container |
-| POST | /api/v1/containers | Create container |
-| DELETE | /api/v1/containers/:id | Delete container |
-| POST | /api/v1/containers/:id/restart | Restart container |
-
-### Scaling
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/v1/scaling | Get scaling config |
-| PUT | /api/v1/scaling | Update config |
-| POST | /api/v1/scaling/scale/:count | Manual scale |
-| GET | /api/v1/scaling/history | Scale events |
-
-### Health & Metrics
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/v1/health | Overall health |
-| GET | /api/v1/health/containers | Container health |
-| GET | /api/v1/metrics | Current metrics |
-| GET | /api/v1/metrics/history | Historical metrics |
-| GET | /metrics/prometheus | Prometheus format |
-
-### Config
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /api/v1/config | Get config |
-| PUT | /api/v1/config | Update config |
-
-## Examples
-
-### Test Proxy
+### Connect via SOCKS5
 
 ```bash
-# Test with curl
-curl --socks5-hostname admin:password@localhost:1080 https://cloudflare.com/cdn-cgi/trace
-
 # Without auth
-curl --socks5-hostname localhost:1080 https://cloudflare.com/cdn-cgi/trace
+curl --socks5-hostname localhost:1080 https://ifconfig.me
+
+# With auth
+curl --socks5-hostname admin:admin123@localhost:1080 https://ifconfig.me
 ```
 
-### Scale Manually
+### REST API
 
 ```bash
-# Scale to 5 containers
-curl -X POST http://localhost:8080/api/v1/scaling/scale/5 \
-  -H "Authorization: Bearer token"
+# List containers
+curl http://localhost:8080/api/v1/containers
 
-# Scale down to 1
-curl -X POST http://localhost:8080/api/v1/scaling/scale/1
+# Get proxy stats
+curl http://localhost:8080/api/v1/proxy/stats
+
+# Create container
+curl -X POST http://localhost:8080/api/v1/containers
+
+# Remove container
+curl -X DELETE http://localhost:8080/api/v1/containers/{id}
 ```
 
-### Check Health
+### CLI Tool (warpctl)
 
 ```bash
-curl http://localhost:8080/api/v1/health
+# List containers
+./warpctl containers
+
+# Create container
+./warpctl create
+
+# Remove container
+./warpctl remove {id}
+
+# Get stats
+./warpctl stats
 ```
 
-### Get Metrics
+## API Documentation
+
+Full OpenAPI spec: [api/openapi.yaml](api/openapi.yaml)
+
+## How It Works
+
+1. **Manager** creates warp-proxy containers with separate volumes (no shared registration)
+2. **Health Checker** monitors container connectivity
+3. **Load Balancer** distributes traffic across healthy backends
+4. **Scaler** auto-creates/removes containers based on load
+5. **WARP Rotation** changes IPs periodically for rate limit bypass
+
+## Architecture
+
+```
+Client → Manager (SOCKS5) → warp-proxy-1 (WARP)
+                           → warp-proxy-2 (WARP)
+                           → warp-proxy-3 (WARP)
+```
+
+Each warp-proxy container:
+- Runs独立 WARP tunnel with unique registration
+- Rotates IP based on `WARP_ROTATION_INTERVAL`
+- Bounded by memory (150MB) and CPU (0.1) limits
+- Auto-restarts on failure
+
+## Development
 
 ```bash
-# Current metrics
-curl http://localhost:8080/api/v1/metrics
+# Build
+go build -o warp-proxy-manager ./cmd/manager/
+go build -o warpctl ./cmd/cli/
 
-# Historical (1 minute window)
-curl http://localhost:8080/api/v1/metrics?window=1m
+# Run locally
+./warp-proxy-manager -config config.yaml
 
-# Prometheus format
-curl http://localhost:8080/metrics/prometheus
-```
-
-## How Scaling Works
-
-### Response Code Scaling
-
-```
-1. Request → Proxy → Backend → Target
-2. Target returns 429 (rate limit)
-3. Proxy retries with next backend (new IP)
-4. If success → Done
-5. If all backends return 429 → Counter++
-6. Counter > threshold → Scale UP
-7. New container = New IP = Fresh rate limit
-```
-
-### Connection-based Scaling
-
-```
-1. Check active connections per container
-2. If avg > threshold → Scale UP
-3. If avg < threshold → Scale DOWN
-4. Respect min/max limits
-5. Respect cooldown period
-```
-
-## Project Structure
-
-```
-warp-proxy-manager/
-├── cmd/manager/main.go      # Entry point
-├── internal/
-│   ├── api/                 # REST API
-│   │   ├── handlers.go
-│   │   └── middleware.go
-│   ├── config/              # Configuration
-│   │   └── config.go
-│   ├── docker/              # Docker client
-│   │   └── client.go
-│   ├── proxy/               # SOCKS5 proxy
-│   │   ├── proxy.go
-│   │   ├── balancer.go
-│   │   ├── tracker.go
-│   │   └── health.go
-│   ├── scaler/              # Auto-scaler
-│   │   └── scaler.go
-│   └── store/               # SQLite store
-│       ├── store.go
-│       └── metrics.go
-├── api/openapi.yaml         # OpenAPI spec
-├── config.example.yaml      # Example config
-├── Makefile
-└── README.md
+# Docker
+docker compose up -d
 ```
 
 ## License
 
-GPL-3.0
+MIT

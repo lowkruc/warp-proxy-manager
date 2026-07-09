@@ -7,7 +7,7 @@
 [![CI](https://github.com/lowkruc/warp-proxy-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/lowkruc/warp-proxy-manager/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/lowkruc/warp-proxy-manager?color=blue&label=latest)](https://github.com/lowkruc/warp-proxy-manager/releases/latest)
 [![Go](https://img.shields.io/github/go-mod/go-version/lowkruc/warp-proxy-manager?color=00ADD8)](https://go.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%20v3-red.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Flowkruc%2Fwarp--proxy--manager-blue?logo=docker)](https://ghcr.io/lowkruc/warp-proxy-manager)
 
 <br />
@@ -217,7 +217,7 @@ Contributions welcome! Please read our [contributing guidelines](CONTRIBUTING.md
 
 ## 📜 License
 
-MIT License — see [LICENSE](LICENSE) for details.
+[GPL-3.0](LICENSE) — see [LICENSE](LICENSE) for details.
 
 ---
 

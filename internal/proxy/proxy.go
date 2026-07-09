@@ -30,6 +30,10 @@ type Metrics interface {
 	Track5xx()
 }
 
+type Scaler interface {
+	TrackResponseCode(backendID string, code int)
+}
+
 type ProxyServer struct {
 	config      *ProxyConfig
 	balancer    *LoadBalancer
@@ -39,6 +43,7 @@ type ProxyServer struct {
 	running     bool
 	userMap     map[string]string
 	metrics     Metrics
+	scaler      Scaler
 	totalReqs   int64
 	total429    int64
 }
@@ -85,6 +90,10 @@ func NewProxyServer(config *ProxyConfig, balancer *LoadBalancer) *ProxyServer {
 
 func (ps *ProxyServer) SetMetrics(m Metrics) {
 	ps.metrics = m
+}
+
+func (ps *ProxyServer) SetScaler(s Scaler) {
+	ps.scaler = s
 }
 
 func (ps *ProxyServer) Start() error {
@@ -151,6 +160,25 @@ func (ps *ProxyServer) handleConn(clientConn net.Conn) {
 	log.Printf("[PROXY] Request: %s:%d", req.DstHost, req.DstPort)
 	atomic.AddInt64(&ps.totalReqs, 1)
 
+	// Track connection for entire request lifetime
+	connID := fmt.Sprintf("%s-%d", clientConn.RemoteAddr(), time.Now().UnixNano())
+	// Backend ID assigned after first successful try
+	var trackedBackendID string
+	trackConn := func(backendID string) {
+		if trackedBackendID == "" {
+			trackedBackendID = backendID
+			ps.tracker.Track(connID, backendID, clientConn.RemoteAddr().String(), req.DstHost, req.DstPort)
+			ps.balancer.IncrementConnections(backendID)
+		}
+	}
+	untrackConn := func() {
+		if trackedBackendID != "" {
+			ps.tracker.Untrack(connID)
+			ps.balancer.DecrementConnections(trackedBackendID)
+		}
+	}
+	defer untrackConn()
+
 	// Try backends with retry on 429/5xx
 	maxRetries := ps.config.MaxRetries
 	if maxRetries <= 0 {
@@ -169,6 +197,7 @@ func (ps *ProxyServer) handleConn(clientConn net.Conn) {
 		tried[backend.ID] = true
 
 		log.Printf("[PROXY] Retry %d, using backend: %s (%s)", retry, backend.Name, backend.Address)
+		trackConn(backend.ID)
 
 		// Try this backend
 		respCode, err := ps.tryBackend(clientConn, req, backend)
@@ -184,6 +213,9 @@ func (ps *ProxyServer) handleConn(clientConn net.Conn) {
 			if ps.metrics != nil {
 				ps.metrics.Track429()
 			}
+			if ps.scaler != nil {
+				ps.scaler.TrackResponseCode(backend.ID, 429)
+			}
 			log.Printf("[PROXY] Backend %s returned 429, trying next...", backend.Name)
 			continue
 		}
@@ -191,6 +223,9 @@ func (ps *ProxyServer) handleConn(clientConn net.Conn) {
 		if respCode >= 500 {
 			if ps.metrics != nil {
 				ps.metrics.Track5xx()
+			}
+			if ps.scaler != nil {
+				ps.scaler.TrackResponseCode(backend.ID, respCode)
 			}
 			log.Printf("[PROXY] Backend %s returned %d, trying next...", backend.Name, respCode)
 			continue
@@ -215,15 +250,7 @@ func (ps *ProxyServer) tryBackend(clientConn net.Conn, req *socks5Request, backe
 	}
 	defer backendConn.Close()
 
-	// Track connection
-	connID := fmt.Sprintf("%s-%d", clientConn.RemoteAddr(), time.Now().UnixNano())
-	ps.tracker.Track(connID, backend.ID, clientConn.RemoteAddr().String(), req.DstHost, req.DstPort)
-	ps.balancer.IncrementConnections(backend.ID)
-
-	defer func() {
-		ps.tracker.Untrack(connID)
-		ps.balancer.DecrementConnections(backend.ID)
-	}()
+	// Connection tracked by caller (handleConn)
 
 	// Forward SOCKS5 handshake to backend
 	log.Printf("[PROXY] Forwarding handshake to backend %s", backend.Address)

@@ -1,6 +1,7 @@
 package scaler
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -140,17 +141,14 @@ func (s *Scaler) evaluate() {
 		return
 	}
 
-	currentCount := s.docker.RunningCount(nil)
+	currentCount := s.docker.RunningCount(context.Background())
+	log.Printf("[SCALER] evaluate: running=%d cooldown_ok=%v", currentCount, time.Since(s.lastScale) >= s.config.Scaling.Cooldown)
 	if currentCount == 0 {
 		return
 	}
 
 	// Check scale up triggers
 	for _, trigger := range s.config.Scaling.Triggers {
-		if !trigger.Enabled {
-			continue
-		}
-
 		switch trigger.Type {
 		case "response_code":
 			if s.shouldScaleResponseCode(trigger, currentCount) {
@@ -229,6 +227,7 @@ func (s *Scaler) shouldScaleConnection(trigger config.ScaleTrigger, currentCount
 	avgConns := float64(totalConns) / float64(len(stats))
 
 	if avgConns <= trigger.Threshold {
+		log.Printf("[SCALER] %s: avg=%.1f <= threshold=%.1f, skip", trigger.Name, avgConns, trigger.Threshold)
 		return false
 	}
 
@@ -276,7 +275,7 @@ func (s *Scaler) shouldScaleDown(trigger config.ScaleTrigger, currentCount int) 
 }
 
 func (s *Scaler) scale(targetCount int, reason string) {
-	currentCount := s.docker.RunningCount(nil)
+	currentCount := s.docker.RunningCount(context.Background())
 
 	start := time.Now()
 
@@ -289,28 +288,26 @@ func (s *Scaler) scale(targetCount int, reason string) {
 	}
 
 	if targetCount > currentCount {
-		// Scale up
+		// Scale up (sequential to avoid port conflicts)
 		log.Printf("[SCALER] Scaling UP: %d -> %d (reason: %s)", currentCount, targetCount, reason)
 		for i := 0; i < targetCount-currentCount; i++ {
-			go func() {
-				container, err := s.docker.CreateContainer(nil, "")
-				if err != nil {
-					log.Printf("[SCALER] Failed to create container: %v", err)
-					return
-				}
-				log.Printf("[SCALER] Created container: %s", container.Name)
-			}()
+			container, err := s.docker.CreateContainer(context.Background(), "")
+			if err != nil {
+				log.Printf("[SCALER] Failed to create container: %v", err)
+				continue
+			}
+			log.Printf("[SCALER] Created container: %s", container.Name)
 		}
 	} else if targetCount < currentCount {
 		// Scale down
 		log.Printf("[SCALER] Scaling DOWN: %d -> %d (reason: %s)", currentCount, targetCount, reason)
-		containers, _ := s.docker.ListContainers(nil)
+		containers, _ := s.docker.ListContainers(context.Background())
 		removed := 0
 		for _, c := range containers {
 			if removed >= currentCount-targetCount {
 				break
 			}
-			if err := s.docker.RemoveContainer(nil, c.ID, false); err != nil {
+			if err := s.docker.RemoveContainer(context.Background(), c.ID, true); err != nil {
 				log.Printf("[SCALER] Failed to remove container %s: %v", c.ID, err)
 				continue
 			}

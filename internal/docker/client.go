@@ -385,7 +385,11 @@ func (c *Client) GetContainer(ctx context.Context, id string) (*ContainerInfo, e
 }
 
 func (c *Client) RunningCount(ctx context.Context) int {
-	containers, _ := c.ListContainers(ctx)
+	containers, err := c.ListContainers(ctx)
+	if err != nil {
+		log.Printf("[DOCKER] RunningCount: %v", err)
+		return 0
+	}
 	count := 0
 	for _, cont := range containers {
 		if cont.Status == "running" {

@@ -1,10 +1,18 @@
 services:
   manager:
     image: ghcr.io/lowkruc/warp-proxy-manager:latest
+    container_name: warp-manager
     ports:
       - "8080:8080"
       - "1080:1080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config.yaml:/app/config.yaml
+    networks:
+      - warp-net
     restart: unless-stopped
+
+networks:
+  warp-net:
+    name: warp-net
+    driver: bridge

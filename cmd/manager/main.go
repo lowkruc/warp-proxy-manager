@@ -75,11 +75,12 @@ func main() {
 			Pass: u.Pass,
 		})
 	}
-	proxyServer := proxy.NewProxyServer(proxyConfig, balancer)
-	proxyServer.SetMetrics(metricsCollector)
-
 	// Initialize scaler
 	scalerInstance := scaler.NewScaler(cfg, dockerClient, balancer)
+
+	proxyServer := proxy.NewProxyServer(proxyConfig, balancer)
+	proxyServer.SetMetrics(metricsCollector)
+	proxyServer.SetScaler(scalerInstance)
 
 	// Initialize health checker
 	healthChecker := proxy.NewHealthChecker(

@@ -6,7 +6,9 @@ proxy:
   listen: ":1080"
   auth:
     enabled: false
-    users: []
+    users:
+      - user: admin
+        pass: "$2a$10$..." # bcrypt hash, or plain text for dev
   timeout:
     connect: 5s
     idle: 30s
@@ -15,12 +17,50 @@ scaling:
   min: 3
   max: 10
   cooldown: 60s
-  triggers: []
+  triggers:
+    # Scale up when avg connections per backend exceeds threshold
+    - name: high_connections
+      type: connection
+      threshold: 100
+      scale_direction: up
+      scale_count: 2
+      cooldown: 120s
+
+    # Scale down when avg connections drops below threshold
+    - name: low_connections
+      type: connection
+      threshold: 20
+      scale_direction: down
+      scale_count: 1
+      cooldown: 300s
+
+    # Scale up when too many 429 (rate limit) responses
+    - name: rate_limit
+      type: response_code
+      response_code: 429
+      threshold: 10
+      window: 60s
+      scale_direction: up
+      scale_count: 1
+      cooldown: 120s
+
+    # Scale up when 5xx errors spike
+    - name: server_errors
+      type: response_code
+      response_code: 502
+      threshold: 5
+      window: 30s
+      scale_direction: up
+      scale_count: 2
+      cooldown: 180s
 
 loadbalancer:
   algorithm: roundrobin
   health_check:
-    enabled: false
+    enabled: true
+    interval: 10s
+    timeout: 5s
+    unhealthy_threshold: 3
 
 docker:
   image: "ghcr.io/lowkruc/warp-proxy:latest"

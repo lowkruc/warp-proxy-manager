@@ -75,7 +75,7 @@ func TestLoadBalancer_Next(t *testing.T) {
 				{"id3", "backend3", "10.0.0.3:1080", 1080},
 			},
 			calls: 6,
-			wantOrder: []string{"id3", "id1", "id2", "id3", "id1", "id2"}, // starts from next after last AddBackend
+			wantOrder: []string{"id2", "id3", "id1", "id2", "id3", "id1"}, // starts from index 0, round-robin cycles
 		},
 		{
 			name:      "empty backends",

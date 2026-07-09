@@ -174,16 +174,20 @@ func (s *Store) Cleanup(days int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(
-		`DELETE FROM metrics WHERE timestamp < datetime('now', '-%d days')`, days,
-	)
-	if err != nil {
-		return err
+	var err error
+	if days <= 0 {
+		_, err = s.db.Exec(`DELETE FROM metrics`)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`DELETE FROM scale_events`)
+	} else {
+		_, err = s.db.Exec(`DELETE FROM metrics WHERE timestamp < datetime('now', '-%d days')`, days)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`DELETE FROM scale_events WHERE timestamp < datetime('now', '-%d days')`, days)
 	}
-
-	_, err = s.db.Exec(
-		`DELETE FROM scale_events WHERE timestamp < datetime('now', '-%d days')`, days,
-	)
 	return err
 }
 

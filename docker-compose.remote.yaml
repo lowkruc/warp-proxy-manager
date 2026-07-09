@@ -1,6 +1,6 @@
 services:
   manager:
-    image: ghcr.io/lowkruc/warp-proxy-manager:v1.1.0
+    image: ghcr.io/lowkruc/warp-proxy-manager:latest
     ports:
       - "8080:8080"
       - "1080:1080"

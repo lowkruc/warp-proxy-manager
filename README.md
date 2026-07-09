@@ -51,13 +51,16 @@ Dynamic load balancer & manager for warp-proxy containers.
 - **Prometheus Metrics** - /metrics/prometheus endpoint
 - **Metrics History** - SQLite storage for historical data
 - **Graceful Shutdown** - Proper cleanup on exit
+- **Alerting** - Webhook notifications for events
+- **Rolling Updates** - Zero-downtime container updates
+- **CLI Tool** - `warpctl` for easy management
 
 ## Quick Start
 
 ### Build
 
 ```bash
-make build
+make all  # Build both manager and CLI
 ```
 
 ### Run
@@ -70,11 +73,23 @@ make run
 make dev
 ```
 
-### Docker
+### CLI Tool
 
 ```bash
-docker build -t warp-proxy-manager .
-docker run -p 1080:1080 -p 8080:8080 -v /var/run/docker.sock:/var/run/docker.sock warp-proxy-manager
+# Show status
+./warpctl status
+
+# List containers
+./warpctl containers
+
+# Scale to 5
+./warpctl scale 5
+
+# Check health
+./warpctl health
+
+# Create container
+./warpctl create
 ```
 
 ## Configuration

@@ -1,12 +1,19 @@
 .PHONY: build clean run test
 
-# Build
+# Build all
+all: build build-cli
+
+# Build manager
 build:
 	CGO_ENABLED=1 go build -o warp-proxy-manager ./cmd/manager/
 
+# Build CLI
+build-cli:
+	go build -o warpctl ./cmd/cli/
+
 # Clean
 clean:
-	rm -f warp-proxy-manager
+	rm -f warp-proxy-manager warpctl
 	rm -rf data/
 
 # Run

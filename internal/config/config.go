@@ -13,6 +13,13 @@ type Config struct {
 	Scaling      ScalingConfig      `yaml:"scaling"`
 	LoadBalancer LoadBalancerConfig `yaml:"loadbalancer"`
 	Docker       DockerConfig       `yaml:"docker"`
+	Alerting     AlertConfig        `yaml:"alerting"`
+}
+
+type AlertConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Webhook string   `yaml:"webhook"`
+	Events  []string `yaml:"events"` // scale_up, scale_down, unhealthy
 }
 
 type ManagerConfig struct {

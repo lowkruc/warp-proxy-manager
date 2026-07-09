@@ -17,6 +17,7 @@ import (
 	"github.com/lowkruc/warp-proxy-manager/internal/docker"
 	"github.com/lowkruc/warp-proxy-manager/internal/proxy"
 	"github.com/lowkruc/warp-proxy-manager/internal/scaler"
+	"github.com/lowkruc/warp-proxy-manager/internal/store"
 )
 
 func main() {
@@ -39,6 +40,14 @@ func main() {
 	log.Printf("[MAIN] API port: %d", cfg.Manager.APIPort)
 	log.Printf("[MAIN] Proxy listen: %s", cfg.Proxy.Listen)
 
+	// Initialize store
+	dbPath := "data/metrics.db"
+	st, err := store.New(dbPath)
+	if err != nil {
+		log.Fatalf("[MAIN] Failed to create store: %v", err)
+	}
+	defer st.Close()
+
 	// Initialize Docker client
 	dockerClient, err := docker.NewClient(cfg)
 	if err != nil {
@@ -49,11 +58,36 @@ func main() {
 	// Initialize load balancer
 	balancer := proxy.NewLoadBalancer(cfg.LoadBalancer.Algorithm)
 
+	// Initialize metrics collector
+	metricsCollector := store.NewMetricsCollector(st, balancer, 10*time.Second)
+
+	// Initialize proxy server
+	proxyConfig := &proxy.ProxyConfig{
+		Listen:         cfg.Proxy.Listen,
+		AuthEnabled:    cfg.Proxy.Auth.Enabled,
+		ConnectTimeout: cfg.Proxy.Timeout.Connect,
+		IdleTimeout:    cfg.Proxy.Timeout.Idle,
+		MaxRetries:     3,
+	}
+	for _, u := range cfg.Proxy.Auth.Users {
+		proxyConfig.Users = append(proxyConfig.Users, proxy.ProxyUser{
+			User: u.User,
+			Pass: u.Pass,
+		})
+	}
+	proxyServer := proxy.NewProxyServer(proxyConfig, balancer)
+	proxyServer.SetMetrics(metricsCollector)
+
 	// Initialize scaler
 	scalerInstance := scaler.NewScaler(cfg, dockerClient, balancer)
 
-	// Initialize proxy server
-	proxyServer := proxy.NewProxyServer(cfg, balancer)
+	// Initialize health checker
+	healthChecker := proxy.NewHealthChecker(
+		balancer,
+		cfg.LoadBalancer.HealthCheck.Interval,
+		cfg.LoadBalancer.HealthCheck.Timeout,
+		cfg.LoadBalancer.HealthCheck.UnhealthyThreshold,
+	)
 
 	// Start API server
 	gin.SetMode(gin.ReleaseMode)
@@ -62,11 +96,9 @@ func main() {
 	router.Use(api.CORSMiddleware())
 	router.Use(api.LoggerMiddleware())
 
-	// Register API routes
-	handler := api.NewHandler(cfg, dockerClient, balancer, scalerInstance, proxyServer)
+	handler := api.NewHandler(cfg, dockerClient, balancer, scalerInstance, proxyServer, st, metricsCollector)
 	handler.RegisterRoutes(router)
 
-	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -77,7 +109,6 @@ func main() {
 		Handler: router,
 	}
 
-	// Start API server
 	go func() {
 		log.Printf("[MAIN] API server listening on %s", apiAddr)
 		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -93,7 +124,13 @@ func main() {
 	// Start scaler
 	scalerInstance.Start()
 
-	// Ensure at least one container is running
+	// Start health checker
+	healthChecker.Start()
+
+	// Start metrics collector
+	metricsCollector.Start()
+
+	// Ensure minimum containers
 	ensureMinimumContainers(dockerClient, cfg)
 
 	log.Printf("[MAIN] Warp Proxy Manager started successfully")
@@ -107,17 +144,15 @@ func main() {
 
 	log.Printf("[MAIN] Shutting down...")
 
-	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Stop scaler
+	// Stop components
 	scalerInstance.Stop()
-
-	// Stop proxy
+	healthChecker.Stop()
+	metricsCollector.Stop()
 	proxyServer.Stop()
 
-	// Stop API server
 	if err := apiServer.Shutdown(ctx); err != nil {
 		log.Printf("[MAIN] API server shutdown error: %v", err)
 	}

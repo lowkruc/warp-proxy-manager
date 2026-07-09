@@ -1,31 +1,38 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lowkruc/warp-proxy-manager/internal/config"
 	"github.com/lowkruc/warp-proxy-manager/internal/docker"
 	"github.com/lowkruc/warp-proxy-manager/internal/proxy"
 	"github.com/lowkruc/warp-proxy-manager/internal/scaler"
+	"github.com/lowkruc/warp-proxy-manager/internal/store"
 )
 
 type Handler struct {
-	config   *config.Config
-	docker   *docker.Client
-	balancer *proxy.LoadBalancer
-	scaler   *scaler.Scaler
-	proxy    *proxy.ProxyServer
+	config    *config.Config
+	docker    *docker.Client
+	balancer  *proxy.LoadBalancer
+	scaler    *scaler.Scaler
+	proxy     *proxy.ProxyServer
+	store     *store.Store
+	metrics   *store.MetricsCollector
 }
 
-func NewHandler(cfg *config.Config, dockerClient *docker.Client, balancer *proxy.LoadBalancer, scaler *scaler.Scaler, proxyServer *proxy.ProxyServer) *Handler {
+func NewHandler(cfg *config.Config, dockerClient *docker.Client, balancer *proxy.LoadBalancer, scaler *scaler.Scaler, proxyServer *proxy.ProxyServer, st *store.Store, mc *store.MetricsCollector) *Handler {
 	return &Handler{
 		config:   cfg,
 		docker:   dockerClient,
 		balancer: balancer,
 		scaler:   scaler,
 		proxy:    proxyServer,
+		store:    st,
+		metrics:  mc,
 	}
 }
 
@@ -55,27 +62,32 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 
 	// Metrics
 	api.GET("/metrics", h.getMetrics)
+	api.GET("/metrics/history", h.getMetricsHistory)
 
 	// Config
 	api.GET("/config", h.getConfig)
 	api.PUT("/config", h.updateConfig)
+
+	// Prometheus metrics
+	r.GET("/metrics/prometheus", h.getPrometheusMetrics)
 }
 
 func (h *Handler) getProxyStats(c *gin.Context) {
 	stats := h.proxy.GetStats()
 	c.JSON(http.StatusOK, gin.H{
-		"active_connections": stats["active_connections"],
-		"per_backend":        stats["per_backend"],
-		"avg_per_backend":    stats["avg_per_backend"],
-		"backends":           h.balancer.HealthyCount(),
+		"total_requests":   stats.TotalRequests,
+		"total_429":        stats.Total429,
+		"active_connections": stats.ActiveConns,
+		"per_backend":      stats.PerBackend,
+		"backends_healthy": stats.BackendsHealthy,
 	})
 }
 
 func (h *Handler) getConnections(c *gin.Context) {
 	stats := h.proxy.GetStats()
 	c.JSON(http.StatusOK, gin.H{
-		"total":       stats["active_connections"],
-		"per_backend": stats["per_backend"],
+		"total":       stats.ActiveConns,
+		"per_backend": stats.PerBackend,
 	})
 }
 
@@ -93,7 +105,6 @@ func (h *Handler) listContainers(c *gin.Context) {
 			"name":        cont.Name,
 			"status":      cont.Status,
 			"port":        cont.Port,
-			"connections": cont.Connections,
 		}
 	}
 
@@ -112,13 +123,12 @@ func (h *Handler) getContainer(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":          container.ID,
-		"name":        container.Name,
-		"status":      container.Status,
-		"port":        container.Port,
-		"ip":          container.IP,
-		"started_at":  container.StartedAt,
-		"connections": container.Connections,
+		"id":         container.ID,
+		"name":       container.Name,
+		"status":     container.Status,
+		"port":       container.Port,
+		"ip":         container.IP,
+		"started_at": container.StartedAt,
 	})
 }
 
@@ -219,13 +229,13 @@ func (h *Handler) getScaleHistory(c *gin.Context) {
 
 func (h *Handler) getHealth(c *gin.Context) {
 	containers, _ := h.docker.ListContainers(c.Request.Context())
-	
+
 	running := 0
 	healthy := 0
 	for _, cont := range containers {
 		if cont.Status == "running" {
 			running++
-			healthy++ // simplified
+			healthy++
 		}
 	}
 
@@ -235,6 +245,8 @@ func (h *Handler) getHealth(c *gin.Context) {
 	} else if healthy < len(containers) {
 		status = "degraded"
 	}
+
+	stats := h.proxy.GetStats()
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": status,
@@ -246,7 +258,7 @@ func (h *Handler) getHealth(c *gin.Context) {
 		},
 		"proxy": gin.H{
 			"status":             "running",
-			"active_connections": h.proxy.GetStats()["active_connections"],
+			"active_connections": stats.ActiveConns,
 		},
 	})
 }
@@ -277,22 +289,45 @@ func (h *Handler) getContainerHealth(c *gin.Context) {
 }
 
 func (h *Handler) getMetrics(c *gin.Context) {
-	containers, _ := h.docker.ListContainers(c.Request.Context())
-	stats := h.proxy.GetStats()
+	window := c.DefaultQuery("window", "current")
 
-	running := 0
-	for _, cont := range containers {
-		if cont.Status == "running" {
-			running++
-		}
+	if window == "current" {
+		stats := h.proxy.GetStats()
+		c.JSON(http.StatusOK, gin.H{
+			"timestamp":          stats,
+			"active_connections": stats.ActiveConns,
+			"total_requests":     stats.TotalRequests,
+			"total_429":          stats.Total429,
+			"backends":           stats.BackendsHealthy,
+		})
+		return
+	}
+
+	// Get historical metrics
+	records, err := h.metrics.GetHistory(window, 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"timestamp":          gin.H{},
-		"active_connections": stats["active_connections"],
-		"backends":           h.balancer.HealthyCount(),
-		"containers_running": running,
-		"avg_per_backend":    stats["avg_per_backend"],
+		"metrics": records,
+	})
+}
+
+func (h *Handler) getMetricsHistory(c *gin.Context) {
+	window := c.DefaultQuery("window", "1m")
+	limitStr := c.DefaultQuery("limit", "100")
+	limit, _ := strconv.Atoi(limitStr)
+
+	records, err := h.metrics.GetHistory(window, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"metrics": records,
 	})
 }
 
@@ -325,13 +360,9 @@ func (h *Handler) getConfig(c *gin.Context) {
 
 func (h *Handler) updateConfig(c *gin.Context) {
 	var req struct {
-		Proxy struct {
-			Listen string `json:"listen"`
-		} `json:"proxy"`
 		Scaling struct {
-			Min      int    `json:"min"`
-			Max      int    `json:"max"`
-			Cooldown string `json:"cooldown"`
+			Min int `json:"min"`
+			Max int `json:"max"`
 		} `json:"scaling"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -347,4 +378,40 @@ func (h *Handler) updateConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Config updated"})
+}
+
+func (h *Handler) getPrometheusMetrics(c *gin.Context) {
+	stats := h.proxy.GetStats()
+	containers, _ := h.docker.ListContainers(c.Request.Context())
+
+	var sb strings.Builder
+
+	sb.WriteString("# HELP warp_proxy_total_requests Total proxy requests\n")
+	sb.WriteString("# TYPE warp_proxy_total_requests counter\n")
+	sb.WriteString(fmt.Sprintf("warp_proxy_total_requests %d\n", stats.TotalRequests))
+
+	sb.WriteString("# HELP warp_proxy_total_429 Total 429 responses\n")
+	sb.WriteString("# TYPE warp_proxy_total_429 counter\n")
+	sb.WriteString(fmt.Sprintf("warp_proxy_total_429 %d\n", stats.Total429))
+
+	sb.WriteString("# HELP warp_proxy_active_connections Active connections\n")
+	sb.WriteString("# TYPE warp_proxy_active_connections gauge\n")
+	sb.WriteString(fmt.Sprintf("warp_proxy_active_connections %d\n", stats.ActiveConns))
+
+	sb.WriteString("# HELP warp_proxy_backends_healthy Healthy backends\n")
+	sb.WriteString("# TYPE warp_proxy_backends_healthy gauge\n")
+	sb.WriteString(fmt.Sprintf("warp_proxy_backends_healthy %d\n", stats.BackendsHealthy))
+
+	running := 0
+	for _, cont := range containers {
+		if cont.Status == "running" {
+			running++
+		}
+	}
+
+	sb.WriteString("# HELP warp_proxy_containers_running Running containers\n")
+	sb.WriteString("# TYPE warp_proxy_containers_running gauge\n")
+	sb.WriteString(fmt.Sprintf("warp_proxy_containers_running %d\n", running))
+
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(sb.String()))
 }

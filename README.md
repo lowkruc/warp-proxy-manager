@@ -1,151 +1,202 @@
-# Warp Proxy Manager
+<div align="center">
 
-Dynamic load balancer and manager for [warp-docker](https://github.com/lowkruc/warp-docker) containers. Auto-scaling, SOCKS5 proxy, REST API, and Docker deployment.
+# 🌐 Warp Proxy Manager
 
-## Features
+**Dynamic load balancer & auto-scaler for Cloudflare WARP tunnels**
 
-- **SOCKS5 Proxy** - Forward proxy with load balancing
-- **Auto-Scaling** - Scale containers based on connection count or response codes (429, 5xx)
-- **Health Checking** - Automatic backend health monitoring
-- **Load Balancing** - Round-robin, least connections, or IP hash
-- **REST API** - Full API with OpenAPI spec
-- **Prometheus Metrics** - Export metrics for monitoring
-- **Rolling Updates** - Update backends without downtime
-- **Docker Management** - Auto-create and manage warp-proxy containers
+[![CI](https://github.com/lowkruc/warp-proxy-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/lowkruc/warp-proxy-manager/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/lowkruc/warp-proxy-manager?color=blue&label=latest)](https://github.com/lowkruc/warp-proxy-manager/releases/latest)
+[![Go](https://img.shields.io/github/go-mod/go-version/lowkruc/warp-proxy-manager?color=00ADD8)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Flowkruc%2Fwarp--proxy--manager-blue?logo=docker)](https://ghcr.io/lowkruc/warp-proxy-manager)
 
-## Quick Start
+<br />
+
+[Features](#-features) · [Quick Start](#-quick-start) · [Architecture](#-architecture) · [Configuration](#-configuration) · [API](#-api) · [Contributing](#-contributing) · [Support](#-support)
+
+---
+
+</div>
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔄 **Auto-Scaling** | Scale containers based on connections or 429/5xx response codes |
+| 🔀 **Load Balancing** | Round-robin, least connections, or IP hash algorithms |
+| 🩺 **Health Checking** | Automatic backend health monitoring & failover |
+| 🧦 **SOCKS5 Proxy** | Forward proxy with optional user/password authentication |
+| 📡 **REST API** | Full API with OpenAPI spec for programmatic control |
+| 📊 **Prometheus Metrics** | Export metrics for monitoring dashboards |
+| 🐳 **Docker Native** | Auto-create, manage & cleanup warp-proxy containers |
+| 🏷️ **Label-Based Tracking** | Containers tracked by label, not prefix — no conflicts |
+| 🔄 **Orphan Cleanup** | Auto-remove orphaned containers on startup & shutdown |
+| ⚡ **Pure Go** | No CGO required — single static binary |
+
+## 📦 Quick Start
+
+### Docker Compose (recommended)
 
 ```bash
-# Clone and run
 git clone https://github.com/lowkruc/warp-proxy-manager.git
 cd warp-proxy-manager
+
+# Edit config
+cp config.example.yaml config.yaml
+# ... edit config.yaml ...
+
+# Run
 docker compose up -d
 ```
 
-## Configuration
-
-Copy and edit config file:
+### Verify
 
 ```bash
-cp config.example.yaml config.yaml
+# Health check
+curl http://localhost:8080/health
+
+# Test SOCKS5
+curl --socks5-hostname localhost:1080 https://ifconfig.me
+
+# List containers
+curl http://localhost:8080/api/v1/containers
 ```
 
-### Config Reference
+## 🏗️ Architecture
+
+```
+┌──────────────┐
+│    Client    │
+└──────┬───────┘
+       │ SOCKS5
+       ▼
+┌──────────────────────────────────────┐
+│         Warp Proxy Manager           │
+│  ┌─────────┐  ┌─────────┐           │
+│  │  API    │  │ Proxy   │           │
+│  │ :8080   │  │ :1080   │           │
+│  └────┬────┘  └────┬────┘           │
+│       │            │                 │
+│  ┌────▼────────────▼────┐           │
+│  │    Load Balancer     │           │
+│  │ (round-robin/lc/ip)  │           │
+│  └────┬────────────┬────┘           │
+│       │            │                 │
+│  ┌────▼────┐  ┌────▼────┐          │
+│  │ Scaler  │  │ Health  │          │
+│  │         │  │ Checker │          │
+│  └─────────┘  └─────────┘          │
+└──────────────────────────────────────┘
+       │         │         │
+       ▼         ▼         ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│  warp-1  │ │  warp-2  │ │  warp-N  │
+│  WARP    │ │  WARP    │ │  WARP    │
+│  :1081   │ │  :1082   │ │  :10XX   │
+└──────────┘ └──────────┘ └──────────┘
+```
+
+Each warp-proxy container:
+- Runs an independent Cloudflare WARP tunnel
+- Rotates IP on `WARP_ROTATION_INTERVAL`
+- Bounded by memory & CPU limits
+- Auto-restarts on failure
+
+## ⚙️ Configuration
 
 ```yaml
 manager:
-  api_port: 8080                    # REST API port
-  log_level: info                   # debug, info, warn, error
+  api_port: 8080
+  log_level: info
 
 proxy:
-  listen: ":1080"                   # SOCKS5 proxy listen address
+  listen: ":1080"
   auth:
-    enabled: false                  # Enable SOCKS5 authentication
+    enabled: false
     users:
-      - username: admin
-        password: admin123
+      - user: admin
+        pass: "$2a$10$..."  # bcrypt hash
   timeout:
-    connect: 5s                     # Backend connection timeout
-    idle: 30s                       # Idle connection timeout
+    connect: 5s
+    idle: 30s
 
 scaling:
-  min: 3                            # Minimum containers
-  max: 10                           # Maximum containers
-  cooldown: 60s                     # Cooldown between scaling actions
-  triggers: []                      # Custom scaling triggers
+  min: 3
+  max: 10
+  cooldown: 60s
+  triggers:
+    - name: high_connections
+      type: connection
+      threshold: 100
+      scale_direction: up
+      scale_count: 2
+      cooldown: 120s
+
+    - name: low_connections
+      type: connection
+      threshold: 20
+      scale_direction: down
+      scale_count: 1
+      cooldown: 300s
+
+    - name: rate_limit
+      type: response_code
+      response_code: 429
+      threshold: 10
+      window: 60s
+      scale_direction: up
+      scale_count: 1
+      cooldown: 120s
 
 loadbalancer:
-  algorithm: roundrobin             # roundrobin, leastconn, iphash
+  algorithm: roundrobin
   health_check:
-    enabled: false
+    enabled: true
+    interval: 10s
+    timeout: 5s
+    unhealthy_threshold: 3
 
 docker:
   image: "ghcr.io/lowkruc/warp-proxy:latest"
   network: "warp-net"
   prefix: "warp-proxy"
-  memory_limit: "150m"              # Container memory limit
-  cpu_limit: "0.1"                  # Container CPU limit (0.1 = 10%)
+  memory_limit: "150m"
+  cpu_limit: "0.1"
   env:
-    WARP_SLEEP: "5"                 # Startup delay
-    WARP_ROTATION_INTERVAL: "60"    # IP rotation interval (minutes)
+    WARP_SLEEP: "5"
+    WARP_ROTATION_INTERVAL: "60"
 ```
 
-## Usage
+> See [`config.example.yaml`](config.example.yaml) for full reference.
 
-### Connect via SOCKS5
+## 🔌 API
 
-```bash
-# Without auth
-curl --socks5-hostname localhost:1080 https://ifconfig.me
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/api/v1/containers` | GET | List containers |
+| `/api/v1/containers` | POST | Create container |
+| `/api/v1/containers/:id` | DELETE | Remove container |
+| `/api/v1/containers/:id/restart` | POST | Restart container |
+| `/api/v1/proxy/stats` | GET | Proxy statistics |
+| `/api/v1/proxy/connections` | GET | Active connections |
+| `/api/v1/scaling` | GET/PUT | Scaling config |
+| `/api/v1/scaling/scale/:n` | POST | Manual scale to N |
+| `/api/v1/scaling/history` | GET | Scale events history |
+| `/api/v1/metrics` | GET | Metrics (JSON) |
+| `/metrics` | GET | Prometheus format |
 
-# With auth
-curl --socks5-hostname admin:admin123@localhost:1080 https://ifconfig.me
-```
+> Full OpenAPI spec: [`api/openapi.yaml`](api/openapi.yaml)
 
-### REST API
-
-```bash
-# List containers
-curl http://localhost:8080/api/v1/containers
-
-# Get proxy stats
-curl http://localhost:8080/api/v1/proxy/stats
-
-# Create container
-curl -X POST http://localhost:8080/api/v1/containers
-
-# Remove container
-curl -X DELETE http://localhost:8080/api/v1/containers/{id}
-```
-
-### CLI Tool (warpctl)
-
-```bash
-# List containers
-./warpctl containers
-
-# Create container
-./warpctl create
-
-# Remove container
-./warpctl remove {id}
-
-# Get stats
-./warpctl stats
-```
-
-## API Documentation
-
-Full OpenAPI spec: [api/openapi.yaml](api/openapi.yaml)
-
-## How It Works
-
-1. **Manager** creates warp-proxy containers with separate volumes (no shared registration)
-2. **Health Checker** monitors container connectivity
-3. **Load Balancer** distributes traffic across healthy backends
-4. **Scaler** auto-creates/removes containers based on load
-5. **WARP Rotation** changes IPs periodically for rate limit bypass
-
-## Architecture
-
-```
-Client → Manager (SOCKS5) → warp-proxy-1 (WARP)
-                           → warp-proxy-2 (WARP)
-                           → warp-proxy-3 (WARP)
-```
-
-Each warp-proxy container:
-- Runs独立 WARP tunnel with unique registration
-- Rotates IP based on `WARP_ROTATION_INTERVAL`
-- Bounded by memory (150MB) and CPU (0.1) limits
-- Auto-restarts on failure
-
-## Development
+## 🛠️ Development
 
 ```bash
 # Build
 go build -o warp-proxy-manager ./cmd/manager/
 go build -o warpctl ./cmd/cli/
+
+# Run tests
+go test ./...
 
 # Run locally
 ./warp-proxy-manager -config config.yaml
@@ -154,6 +205,36 @@ go build -o warpctl ./cmd/cli/
 docker compose up -d
 ```
 
-## License
+## 🤝 Contributing
 
-MIT
+Contributions welcome! Please read our [contributing guidelines](CONTRIBUTING.md) first.
+
+1. Fork the repo
+2. Create your feature branch (`git checkout -b feature/amazing`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing`)
+5. Open a Pull Request
+
+## 📜 License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+## 💖 Support
+
+If you find this project useful, consider supporting its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/lowkruc)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/lowkruc)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/lowkruc)
+
+<br />
+
+**Made with ❤️ by [lowkruc](https://github.com/lowkruc)**
+
+[⬆ Back to top](#-warp-proxy-manager)
+
+</div>

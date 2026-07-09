@@ -73,23 +73,57 @@ make run
 make dev
 ```
 
+### Docker Compose (Recommended)
+
+```bash
+# Copy and edit config
+cp config.example.yaml config.yaml
+nano config.yaml
+
+# Build and run
+docker compose up -d
+
+# Check logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Docker Manual
+
+```bash
+# Build
+docker build -t warp-proxy-manager .
+
+# Run
+docker run -d \
+  --name warp-manager \
+  -p 1080:1080 \
+  -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  warp-proxy-manager
+```
+
 ### CLI Tool
 
 ```bash
-# Show status
-./warpctl status
+# Build CLI
+make build-cli
 
-# List containers
-./warpctl containers
+# Or use Docker
+alias warpctl='docker run --rm --network host -e WARP_MANAGER_HOST=localhost warp-proxy-manager warpctl'
 
-# Scale to 5
-./warpctl scale 5
-
-# Check health
-./warpctl health
-
-# Create container
-./warpctl create
+# Commands
+warpctl status
+warpctl containers
+warpctl scale 5
+warpctl health
+warpctl create
+warpctl restart <id>
+warpctl delete <id>
+warpctl history
 ```
 
 ## Configuration

@@ -1,4 +1,4 @@
-.PHONY: build clean run test
+.PHONY: build clean run test docker docker-down
 
 # Build all
 all: build build-cli
@@ -15,6 +15,22 @@ build-cli:
 clean:
 	rm -f warp-proxy-manager warpctl
 	rm -rf data/
+
+# Docker build
+docker:
+	docker compose build
+
+# Docker run
+docker-up:
+	docker compose up -d
+
+# Docker stop
+docker-down:
+	docker compose down
+
+# Docker logs
+docker-logs:
+	docker compose logs -f
 
 # Run
 run: build

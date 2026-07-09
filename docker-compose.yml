@@ -1,0 +1,22 @@
+services:
+  manager:
+    build: .
+    container_name: warp-manager
+    restart: always
+    ports:
+      - "1080:1080"   # SOCKS5 proxy
+      - "8080:8080"   # API
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config.yaml:/app/config.yaml:ro
+      - manager-data:/app/data
+    networks:
+      - warp-net
+
+networks:
+  warp-net:
+    driver: bridge
+    name: warp-net
+
+volumes:
+  manager-data:

@@ -1,0 +1,709 @@
+openapi: 3.1.0
+info:
+  title: Warp Proxy Manager API
+  description: |
+    Load balancer & manager for warp-proxy containers.
+    
+    Features:
+    - Dynamic container scaling
+    - Load balancing (roundrobin, leastconn, iphash)
+    - Connection-based and response code-based auto-scaling
+    - Health monitoring
+    - SOCKS5 proxy with authentication
+  version: 1.1.0
+  contact:
+    name: lowkruc
+    url: https://github.com/lowkruc/warp-proxy
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - BearerAuth: []
+  - BasicAuth: []
+
+tags:
+  - name: proxy
+    description: Proxy operations
+  - name: containers
+    description: Container management
+  - name: scaling
+    description: Auto-scaling operations
+  - name: health
+    description: Health checks
+  - name: metrics
+    description: Metrics and monitoring
+  - name: config
+    description: Configuration management
+
+paths:
+  /api/v1/proxy/stats:
+    get:
+      tags: [proxy]
+      summary: Get proxy statistics
+      description: Returns current proxy statistics including connections and throughput
+      operationId: getProxyStats
+      responses:
+        '200':
+          description: Proxy statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyStats'
+
+  /api/v1/proxy/connections:
+    get:
+      tags: [proxy]
+      summary: List active connections
+      description: Returns list of active proxy connections
+      operationId: listConnections
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Active connections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionList'
+
+  /api/v1/containers:
+    get:
+      tags: [containers]
+      summary: List containers
+      description: Returns all managed warp-proxy containers
+      operationId: listContainers
+      responses:
+        '200':
+          description: Container list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  containers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Container'
+                  total:
+                    type: integer
+
+    post:
+      tags: [containers]
+      summary: Create container
+      description: Create and start a new warp-proxy container
+      operationId: createContainer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContainerRequest'
+      responses:
+        '201':
+          description: Container created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Container'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/containers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      tags: [containers]
+      summary: Get container details
+      operationId: getContainer
+      responses:
+        '200':
+          description: Container details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Container'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [containers]
+      summary: Remove container
+      description: Stop and remove a warp-proxy container
+      operationId: deleteContainer
+      parameters:
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Container removed
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/containers/{id}/restart:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      tags: [containers]
+      summary: Restart container
+      operationId: restartContainer
+      responses:
+        '200':
+          description: Container restarted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Container'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/scaling:
+    get:
+      tags: [scaling]
+      summary: Get scaling configuration
+      operationId: getScalingConfig
+      responses:
+        '200':
+          description: Scaling configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScalingConfig'
+
+    put:
+      tags: [scaling]
+      summary: Update scaling configuration
+      operationId: updateScalingConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScalingConfig'
+      responses:
+        '200':
+          description: Configuration updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/scaling/scale/{count}:
+    parameters:
+      - name: count
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          description: Target container count (0 = min)
+
+    post:
+      tags: [scaling]
+      summary: Manual scale
+      description: Manually scale to specific container count
+      operationId: manualScale
+      responses:
+        '200':
+          description: Scaling initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScaleEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/scaling/history:
+    get:
+      tags: [scaling]
+      summary: Get scale events history
+      operationId: getScaleHistory
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Scale events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScaleEvent'
+
+  /api/v1/health:
+    get:
+      tags: [health]
+      summary: Get overall health
+      operationId: getHealth
+      responses:
+        '200':
+          description: System healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: System unhealthy
+
+  /api/v1/health/containers:
+    get:
+      tags: [health]
+      summary: Get container health status
+      operationId: getContainerHealth
+      responses:
+        '200':
+          description: Container health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  healthy:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContainerHealth'
+                  unhealthy:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContainerHealth'
+
+  /api/v1/metrics:
+    get:
+      tags: [metrics]
+      summary: Get current metrics
+      operationId: getMetrics
+      parameters:
+        - name: window
+          in: query
+          description: Time window for aggregation
+          schema:
+            type: string
+            enum: [current, 1m, 5m, 15m]
+            default: current
+      responses:
+        '200':
+          description: Current metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metrics'
+
+  /metrics:
+    get:
+      tags: [metrics]
+      summary: Prometheus metrics
+      description: Returns metrics in Prometheus format
+      operationId: getPrometheusMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/config:
+    get:
+      tags: [config]
+      summary: Get configuration
+      operationId: getConfig
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Config'
+
+    put:
+      tags: [config]
+      summary: Update configuration
+      description: Partial update of configuration
+      operationId: updateConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Config'
+      responses:
+        '200':
+          description: Configuration updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    BasicAuth:
+      type: http
+      scheme: basic
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
+
+    Container:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "abc123def456"
+        name:
+          type: string
+          example: "warp-1"
+        status:
+          type: string
+          enum: [running, stopped, starting, unhealthy]
+        port:
+          type: integer
+          example: 1081
+        ip:
+          type: string
+          example: "172.18.0.2"
+        started_at:
+          type: string
+          format: date-time
+        last_health:
+          type: string
+          format: date-time
+        connections:
+          type: integer
+          example: 42
+        latency_ms:
+          type: number
+          example: 85.5
+        warp_status:
+          type: string
+          example: "Connected"
+        warp_ip:
+          type: string
+          example: "2a09:bac5:55fa:1d05::2e4:f6"
+
+    CreateContainerRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Custom name (optional, auto-generated if empty)
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional environment variables
+
+    ConnectionList:
+      type: object
+      properties:
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/Connection'
+        total:
+          type: integer
+
+    Connection:
+      type: object
+      properties:
+        id:
+          type: string
+        src_ip:
+          type: string
+        dst_host:
+          type: string
+        dst_port:
+          type: integer
+        container_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        bytes_sent:
+          type: integer
+        bytes_received:
+          type: integer
+
+    ScalingConfig:
+      type: object
+      properties:
+        min:
+          type: integer
+          minimum: 1
+          example: 1
+        max:
+          type: integer
+          minimum: 1
+          example: 10
+        cooldown:
+          type: string
+          example: "60s"
+        triggers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScaleTrigger'
+
+    ScaleTrigger:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "rate-limit"
+        type:
+          type: string
+          enum: [connection, response_code, latency]
+        enabled:
+          type: boolean
+        threshold:
+          type: number
+          description: "Trigger threshold (connections, count, or ms)"
+        window:
+          type: string
+          description: "Time window (e.g., 60s)"
+        scale_direction:
+          type: string
+          enum: [up, down]
+        scale_count:
+          type: integer
+          description: "Number of containers to add/remove"
+        response_code:
+          type: integer
+          description: "HTTP response code to monitor (for response_code type)"
+        cooldown:
+          type: string
+          description: "Cooldown after scaling"
+
+    ScaleEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        from:
+          type: integer
+        to:
+          type: integer
+        reason:
+          type: string
+          example: "response_code_429 threshold exceeded"
+        trigger:
+          type: string
+          example: "rate-limit"
+        duration_ms:
+          type: integer
+          description: "Time taken to complete scaling"
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        containers:
+          type: object
+          properties:
+            total:
+              type: integer
+            running:
+              type: integer
+            healthy:
+              type: integer
+            unhealthy:
+              type: integer
+        proxy:
+          type: object
+          properties:
+            status:
+              type: string
+            active_connections:
+              type: integer
+
+    ContainerHealth:
+      type: object
+      properties:
+        container_id:
+          type: string
+        container_name:
+          type: string
+        status:
+          type: string
+        warp_connected:
+          type: boolean
+        proxy_working:
+          type: boolean
+        last_check:
+          type: string
+          format: date-time
+        latency_ms:
+          type: number
+
+    Metrics:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        active_connections:
+          type: integer
+        total_requests:
+          type: integer
+        rps:
+          type: number
+          description: Requests per second
+        avg_latency_ms:
+          type: number
+        p95_latency_ms:
+          type: number
+        p99_latency_ms:
+          type: number
+        error_rate:
+          type: number
+          description: "Error rate (0-1)"
+        containers_running:
+          type: integer
+        containers_healthy:
+          type: integer
+        response_codes:
+          type: object
+          additionalProperties:
+            type: integer
+          description: "Response code counts (e.g., {200: 1000, 429: 50})"
+        upstream_metrics:
+          type: array
+          items:
+            type: object
+            properties:
+              container_id:
+                type: string
+              connections:
+                type: integer
+              latency_ms:
+                type: number
+              error_rate:
+                type: number
+
+    Config:
+      type: object
+      properties:
+        manager:
+          type: object
+          properties:
+            api_port:
+              type: integer
+            log_level:
+              type: string
+              enum: [debug, info, warn, error]
+        proxy:
+          type: object
+          properties:
+            listen:
+              type: string
+            auth:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                users:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      user:
+                        type: string
+                      pass:
+                        type: string
+                        description: "Bcrypt hash"
+            timeout:
+              type: object
+              properties:
+                connect:
+                  type: string
+                idle:
+                  type: string
+        scaling:
+          $ref: '#/components/schemas/ScalingConfig'
+        loadbalancer:
+          type: object
+          properties:
+            algorithm:
+              type: string
+              enum: [roundrobin, leastconn, iphash]
+            health_check:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                interval:
+                  type: string
+                timeout:
+                  type: string
+                unhealthy_threshold:
+                  type: integer
+        docker:
+          type: object
+          properties:
+            image:
+              type: string
+            network:
+              type: string
+            prefix:
+              type: string
+            env:
+              type: object
+              additionalProperties:
+                type: string

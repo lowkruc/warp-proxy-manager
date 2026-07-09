@@ -1,0 +1,23 @@
+# Binary
+warp-proxy-manager
+
+# Config
+config.yaml
+
+# Data
+*.db
+*.sqlite
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/

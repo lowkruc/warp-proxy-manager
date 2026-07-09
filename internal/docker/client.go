@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ type Client struct {
 	config     *config.Config
 	httpClient *http.Client
 	socketPath string
+	baseURL    string
 }
 
 type ContainerInfo struct {
@@ -92,7 +94,8 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	}
 
 	return &Client{
-		config: cfg,
+		config:  cfg,
+		baseURL: "http://localhost",
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -115,7 +118,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		reqBody = bytes.NewReader(jsonBytes)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, "http://localhost"+path, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -145,9 +148,32 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	return bodyBytes, nil
 }
 
+func (c *Client) pullImage(ctx context.Context, image string) error {
+	log.Printf("[DOCKER] Pulling image: %s", image)
+	resp, err := c.httpClient.Post(
+		c.baseURL+"/images/create?fromImage="+image,
+		"application/json",
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("pull image %s: %d", image, resp.StatusCode)
+	}
+	log.Printf("[DOCKER] Image pulled: %s", image)
+	return nil
+}
+
 func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerInfo, error) {
 	if name == "" {
 		name = fmt.Sprintf("%s-%s", c.config.Docker.Prefix, uuid.New().String()[:8])
+	}
+
+	if err := c.pullImage(ctx, c.config.Docker.Image); err != nil {
+		log.Printf("[DOCKER] Pull failed, trying without pull: %v", err)
 	}
 
 	port, err := c.findAvailablePort(ctx)
@@ -212,6 +238,9 @@ func (c *Client) CreateContainer(ctx context.Context, name string) (*ContainerIn
 		"ExposedPorts":    map[string]interface{}{"1080/tcp": struct{}{}},
 		"HostConfig":      hostConfig,
 		"NetworkingConfig": networkConfig,
+		"Labels": map[string]string{
+			"warp-proxy-managed": "true",
+		},
 	}
 
 	// Ensure network
@@ -248,6 +277,25 @@ func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) err
 	return err
 }
 
+// CleanupManaged removes all warp-proxy-managed containers.
+func (c *Client) CleanupManaged(ctx context.Context) int {
+	containers, err := c.ListContainers(ctx)
+	if err != nil {
+		log.Printf("[DOCKER] Cleanup: failed to list: %v", err)
+		return 0
+	}
+	removed := 0
+	for _, cont := range containers {
+		if err := c.RemoveContainer(ctx, cont.ID, true); err != nil {
+			log.Printf("[DOCKER] Cleanup: failed to remove %s: %v", cont.Name, err)
+			continue
+		}
+		log.Printf("[DOCKER] Cleanup: removed %s", cont.Name)
+		removed++
+	}
+	return removed
+}
+
 func (c *Client) RestartContainer(ctx context.Context, id string) error {
 	path := fmt.Sprintf("/containers/%s/restart?t=10", id)
 	_, err := c.doRequest(ctx, "POST", path, nil)
@@ -267,10 +315,10 @@ func (c *Client) ListContainers(ctx context.Context) ([]*ContainerInfo, error) {
 
 	result := make([]*ContainerInfo, 0)
 	for _, cont := range containers {
-		name := strings.TrimPrefix(cont.Names[0], "/")
-		if !strings.HasPrefix(name, c.config.Docker.Prefix) {
+		if cont.Labels["warp-proxy-managed"] != "true" {
 			continue
 		}
+		name := strings.TrimPrefix(cont.Names[0], "/")
 
 		port := 0
 		if len(cont.Ports) > 0 {

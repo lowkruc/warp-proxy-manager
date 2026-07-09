@@ -130,6 +130,11 @@ func main() {
 	// Start metrics collector
 	metricsCollector.Start()
 
+	// Cleanup orphaned containers from previous run
+	if orphanCount := dockerClient.CleanupManaged(context.Background()); orphanCount > 0 {
+		log.Printf("[MAIN] Cleaned up %d orphaned containers", orphanCount)
+	}
+
 	// Ensure minimum containers
 	ensureMinimumContainers(dockerClient, cfg)
 
@@ -159,6 +164,10 @@ func main() {
 	if err := apiServer.Shutdown(ctx); err != nil {
 		log.Printf("[MAIN] API server shutdown error: %v", err)
 	}
+
+	// Cleanup managed containers
+	n := dockerClient.CleanupManaged(context.Background())
+	log.Printf("[MAIN] Cleaned up %d containers", n)
 
 	log.Printf("[MAIN] Shutdown complete")
 }

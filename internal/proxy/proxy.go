@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -250,34 +251,60 @@ func (ps *ProxyServer) tryBackend(clientConn net.Conn, req *socks5Request, backe
 	}
 	defer backendConn.Close()
 
-	// Connection tracked by caller (handleConn)
+	return ps.tryBackendWithConn(clientConn, backendConn, req, backend)
+}
 
+// tryBackendWithConn is the core logic, testable with mock connections
+func (ps *ProxyServer) tryBackendWithConn(clientConn net.Conn, backendConn net.Conn, req *socks5Request, backend *Backend) (int, error) {
 	// Forward SOCKS5 handshake to backend
-	log.Printf("[PROXY] Forwarding handshake to backend %s", backend.Address)
 	if err := ps.forwardHandshake(clientConn, backendConn); err != nil {
-		log.Printf("[PROXY] Handshake to backend failed: %v", err)
 		return 0, err
 	}
-	log.Printf("[PROXY] Handshake to backend OK")
 
-	// Forward request
-	log.Printf("[PROXY] Forwarding request to backend")
+	// Forward SOCKS5 CONNECT request
 	if err := ps.forwardRequest(clientConn, backendConn, req); err != nil {
-		log.Printf("[PROXY] Request forwarding failed: %v", err)
 		return 0, err
 	}
-	log.Printf("[PROXY] Request forwarded OK")
 
-	log.Printf("[PROXY] Sending success to client")
-	// Send success to client
+	// Send SOCKS5 success to client
 	if err := ps.sendSuccess(clientConn); err != nil {
 		return 0, err
+	}
+
+	// [429 Detection] Read first bytes with timeout to detect rate limit
+	// Some backends return HTTP 429 after SOCKS5 CONNECT succeeds
+	peekBuf := make([]byte, 512)
+	backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	n, peekErr := backendConn.Read(peekBuf)
+	backendConn.SetReadDeadline(time.Time{}) // reset deadline
+
+	if peekErr == nil && n > 0 {
+		// Got data - check for 429 in response
+		if contains429(peekBuf[:n]) {
+			log.Printf("[PROXY] Backend %s returned 429 after CONNECT", backend.Name)
+			return 429, nil
+		}
+		// Not 429, forward peeked bytes to client
+		if _, err := clientConn.Write(peekBuf[:n]); err != nil {
+			return 0, err
+		}
+	} else if peekErr != nil {
+		// Timeout or error - backend didn't respond quickly
+		// This is normal for many protocols, proceed with proxy
+		log.Printf("[PROXY] Backend %s no initial data (timeout ok)", backend.Name)
 	}
 
 	// Bidirectional copy
 	ps.proxy(clientConn, backendConn)
 
 	return 200, nil
+}
+
+// contains429 checks if HTTP 429 is present in response bytes
+func contains429(data []byte) bool {
+	// Look for common patterns: "429", "HTTP/1.1 429", "Too Many Requests"
+	return bytes.Contains(data, []byte("429")) ||
+		bytes.Contains(data, []byte("Too Many Requests"))
 }
 
 func (ps *ProxyServer) forwardHandshake(clientConn, backendConn net.Conn) error {

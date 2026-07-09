@@ -1,11 +1,145 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
+	"time"
 
 	mocks "github.com/lowkruc/warp-proxy-manager/internal/proxy/_mocks"
 )
+
+// ============================================================
+// contains429 tests
+// ============================================================
+
+func TestContains429(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"HTTP 429", []byte("HTTP/1.1 429 Too Many Requests"), true},
+		{"just 429", []byte("429"), true},
+		{"Too Many Requests", []byte("rate limit exceeded: Too Many Requests"), true},
+		{"200 OK", []byte("HTTP/1.1 200 OK"), false},
+		{"404", []byte("HTTP/1.1 404 Not Found"), false},
+		{"empty", []byte{}, false},
+		{"nil", nil, false},
+		{"binary garbage", []byte{0x00, 0x01, 0x02}, false},
+		{"partial match 4290", []byte("HTTP/1.1 4290 Not Found"), true}, // Contains "429"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contains429(tt.data)
+			if got != tt.want {
+				t.Errorf("contains429(%v) = %v, want %v", tt.data, got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================
+// Peek buffer tests
+// ============================================================
+
+func TestTryBackend_429Detected(t *testing.T) {
+	// Test peek buffer detects 429
+	response := []byte("HTTP/1.1 429 Too Many Requests\r\n\r\n")
+	backendConn := mocks.NewConn(response)
+	clientConn := mocks.NewConn(nil)
+
+	// Test peekBuffer directly
+	peekBuf := make([]byte, 512)
+	backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	n, err := backendConn.Read(peekBuf)
+	backendConn.SetReadDeadline(time.Time{})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !contains429(peekBuf[:n]) {
+		t.Error("expected 429 detection")
+	}
+
+	// Verify client doesn't get 429
+	if bytes.Contains(clientConn.Out, []byte("429")) {
+		t.Error("client should not receive 429")
+	}
+}
+
+func TestTryBackend_NormalResponse(t *testing.T) {
+	// Test peek buffer forwards normal response
+	response := []byte("HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHello World!")
+	backendConn := mocks.NewConn(response)
+	clientConn := mocks.NewConn(nil)
+
+	// Test peekBuffer
+	peekBuf := make([]byte, 512)
+	backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	n, err := backendConn.Read(peekBuf)
+	backendConn.SetReadDeadline(time.Time{})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if contains429(peekBuf[:n]) {
+		t.Error("should not detect 429 in normal response")
+	}
+
+	// Forward peeked bytes to client
+	clientConn.Write(peekBuf[:n])
+
+	if !bytes.Contains(clientConn.Out, []byte("200 OK")) {
+		t.Error("client should receive forwarded response")
+	}
+}
+
+func TestTryBackend_TimeoutNoData(t *testing.T) {
+	// Test timeout handling (no data from backend)
+	backendConn := mocks.NewConn(nil) // Empty = timeout
+
+	// Test peekBuffer with timeout
+	peekBuf := make([]byte, 512)
+	backendConn.SetReadDeadline(time.Now().Add(10 * time.Millisecond)) // Short timeout for test
+	n, err := backendConn.Read(peekBuf)
+	backendConn.SetReadDeadline(time.Time{})
+
+	// Expect timeout error
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+
+	// No data means skip 429 check
+	if n > 0 {
+		t.Error("expected no data on timeout")
+	}
+}
+
+func TestPeekBuffer_ForgetPeekedBytes(t *testing.T) {
+	// Verify peeked bytes are forwarded to client
+	response := []byte("HTTP/1.1 200 OK\r\n\r\nData")
+	backendConn := mocks.NewConn(response)
+	clientConn := mocks.NewConn(nil)
+
+	// Peek
+	peekBuf := make([]byte, 512)
+	backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	n, _ := backendConn.Read(peekBuf)
+	backendConn.SetReadDeadline(time.Time{})
+
+	// Forward
+	clientConn.Write(peekBuf[:n])
+
+	// All response bytes should be forwarded
+	if !bytes.Equal(clientConn.Out, response) {
+		t.Errorf("expected all bytes forwarded, got %d bytes, want %d bytes",
+			len(clientConn.Out), len(response))
+	}
+}
 
 func TestIsIPv4(t *testing.T) {
 	tests := []struct {

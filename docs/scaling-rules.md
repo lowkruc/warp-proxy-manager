@@ -15,64 +15,144 @@ Client Request
       │
       ▼
 ┌─────────────────┐
-│  Select Backend │ ← Load Balancer
+│  Select Backend │ ← Load Balancer (roundrobin)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Forward Request │
+│ SOCKS5 Handshake│ ← with backend
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐     ┌──────────────┐
-│ Target Response │────▶│ Check Status │
-└────────┬────────┘     └──────┬───────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-              ▼                ▼                ▼
-         ┌────────┐       ┌────────┐       ┌────────┐
-         │ 2xx/3xx│       │  429   │       │ 5xx/other│
-         └────┬───┘       └────┬───┘       └────┬────┘
-              │                │                │
-              ▼                │                ▼
-         ┌─────────┐          │           ┌─────────┐
-         │ Return  │          │           │ Retry   │
-         │ Success │          │           │ (max 3) │
-         └─────────┘          │           └────┬────┘
-                              │                │
-                              ▼                ▼
-                    ┌───────────────────────────────┐
-                    │      All retries failed?      │
-                    └───────────────┬───────────────┘
-                                    │
-                       ┌────────────┴────────────┐
-                       │                         │
-                       ▼                         ▼
-              ┌─────────────┐           ┌─────────────┐
-              │ Rotate to   │           │ All backends│
-              │ next backend│           │ returned 429│
-              │ (try others)│           └──────┬──────┘
-              └─────────────┘                  │
-                                               ▼
-                                      ┌─────────────────┐
-                                      │ Track in counter│
-                                      │ (429 events)    │
-                                      └────────┬────────┘
-                                               │
-                                               ▼
-                                      ┌─────────────────┐
-                                      │ Counter > threshold?
-                                      └────────┬────────┘
-                                               │
-                                  ┌────────────┴────────────┐
-                                  │                         │
-                                  ▼                         ▼
-                            ┌──────────┐            ┌──────────┐
-                            │   NO     │            │   YES    │
-                            │ (wait)   │            │ SCALE UP │
-                            └──────────┘            └──────────┘
+┌─────────────────┐
+│ SOCKS5 CONNECT  │ ← forward request
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Send Success    │ ← SOCKS5 reply 0x00 to client
+│ to Client       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│ Peek Buffer     │────▶│ Check for 429    │
+│ (512 bytes)     │     │ (500ms timeout)  │
+└────────┬────────┘     └──────┬───────────┘
+         │                     │
+         │          ┌──────────┼──────────┐
+         │          │          │          │
+         │          ▼          ▼          ▼
+         │    ┌──────────┐ ┌───────┐ ┌─────────┐
+         │    │ Timeout  │ │ 429   │ │ Normal  │
+         │    │ (no data)│ │Found  │ │ Data    │
+         │    └────┬─────┘ └───┬───┘ └────┬────┘
+         │         │           │          │
+         │         │           │          ▼
+         │         │           │    ┌───────────┐
+         │         │           │    │ Forward   │
+         │         │           │    │ bytes to  │
+         │         │           │    │ client    │
+         │         │           │    └─────┬─────┘
+         │         │           │          │
+         │         ▼           ▼          │
+         │    ┌────────────────────┐      │
+         │    │    proxy()        │◀─────┘
+         │    │ (bidirectional)   │
+         │    └────────┬─────────┘
+         │             │
+         │             │
+         │    ┌────────┴────────┐
+         │    │ 429 detected?   │
+         │    └────────┬────────┘
+         │             │
+         │    ┌────────┴────────┐
+         │    │                 │
+         │    ▼                 ▼
+         │ ┌──────┐       ┌──────────┐
+         │ │  YES │       │   NO     │
+         │ └──┬───┘       │ 2xx/3xx  │
+         │    │           └────┬─────┘
+         │    │                │
+         │    ▼                ▼
+         │ ┌────────────────────┐
+         │ │  Track in counter  │
+         │ │  (429 events)      │
+         │ └─────────┬──────────┘
+         │           │
+         │           ▼
+         │ ┌────────────────────┐
+         │ │ Retry next backend │
+         │ │ (max 3 retries)   │
+         │ └─────────┬──────────┘
+         │           │
+         │           ▼
+         │ ┌────────────────────┐
+         │ │ All retries failed?│
+         │ └─────────┬──────────┘
+         │           │
+         │    ┌──────┴──────┐
+         │    │             │
+         │    ▼             ▼
+         │ ┌──────┐  ┌───────────┐
+         │ │  YES │  │    NO     │
+         │ └──┬───┘  │  200 OK   │
+         │    │      └───────────┘
+         │    ▼
+         │ ┌────────────────────┐
+         │ │ All backends 429?  │
+         │ └─────────┬──────────┘
+         │           │
+         │    ┌──────┴──────┐
+         │    │             │
+         │    ▼             ▼
+         │ ┌──────┐  ┌──────────┐
+         │ │  YES │  │   NO     │
+         │ └──┬───┘  │  wait    │
+         │    │      └──────────┘
+         │    ▼
+         │ ┌────────────────────┐
+         │ │ Counter > thresh?  │
+         │ └─────────┬──────────┘
+         │           │
+         │    ┌──────┴──────┐
+         │    │             │
+         │    ▼             ▼
+         │ ┌──────┐  ┌──────────┐
+         │ │  NO  │  │ SCALE UP │
+         │ └──────┘  └──────────┘
 ```
+
+## Peek Buffer Mechanism
+
+SOCKS5 proxies cannot directly read HTTP status codes because they operate at Layer 5 (session), not Layer 7 (application). After a successful SOCKS5 CONNECT, the proxy must peek at the initial response bytes to detect rate limiting.
+
+### How It Works
+
+```go
+// After SOCKS5 CONNECT succeeds
+peekBuf := make([]byte, 512)
+backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+n, peekErr := backendConn.Read(peekBuf)
+backendConn.SetReadDeadline(time.Time{}) // reset
+
+if peekErr == nil && n > 0 {
+    if contains429(peekBuf[:n]) {
+        return 429, nil  // Rate limited
+    }
+    clientConn.Write(peekBuf[:n]) // Forward normal response
+}
+// Proceed with bidirectional proxy()
+```
+
+### Timeout Handling
+
+| Scenario | Backend Response | Action | Client Delay |
+|----------|-----------------|--------|--------------|
+| Fast response | Data < 500ms | Check 429, forward if OK | ~0.5ms |
+| Slow response | Timeout 500ms | Skip check, proxy() | 500ms |
+| 429 response | "429" in first 512 bytes | Retry next backend | ~1ms |
+| No data (protocol) | Client speaks first | Skip check, proxy() | 500ms |
 
 ## Scaling States
 
@@ -139,54 +219,84 @@ Client Request
 
 ## Retry Logic
 
-### Request Handler
+### Request Handler (SOCKS5 with Peek)
 
 ```go
-func (p *Proxy) handleRequest(clientConn net.Conn, targetHost string) {
-    maxRetries := 3
-    backends := p.balancer.GetBackends()
+func (ps *ProxyServer) handleConn(clientConn net.Conn) {
+    // ... SOCKS5 handshake, read request ...
     
-    var lastErr error
+    maxRetries := ps.config.MaxRetries
     tried := make(map[string]bool)
-    
-    for retry := 0; retry < maxRetries && retry < len(backends); retry++ {
-        // Select backend (skip already tried)
-        backend := p.balancer.NextSkipTried(tried)
+    var lastErr error
+
+    for retry := 0; retry < maxRetries; retry++ {
+        backend := ps.balancer.NextSkipTried(tried)
         if backend == nil {
             break
         }
         tried[backend.ID] = true
-        
-        // Forward request
-        resp, err := p.forward(clientConn, backend, targetHost)
+
+        respCode, err := ps.tryBackend(clientConn, req, backend)
         if err != nil {
             lastErr = err
             continue
         }
-        
-        // Check response code
-        switch {
-        case resp.StatusCode == 429:
-            // Rate limited - track and retry
-            p.scaler.TrackResponseCode(backend.ID, 429)
-            p.metrics.Incr429(backend.ID)
+
+        // Check response code (from peek buffer)
+        if respCode == 429 {
+            atomic.AddInt64(&ps.total429, 1)
+            ps.metrics.Track429()
+            ps.scaler.TrackResponseCode(backend.ID, 429)
             continue  // Try next backend
-            
-        case resp.StatusCode >= 500:
-            // Server error - retry
-            p.scaler.TrackResponseCode(backend.ID, resp.StatusCode)
-            continue
-            
-        default:
-            // Success - return to client
-            p.writeResponse(clientConn, resp)
-            return
         }
+
+        if respCode >= 500 {
+            ps.metrics.Track5xx()
+            ps.scaler.TrackResponseCode(backend.ID, respCode)
+            continue
+        }
+
+        // Success - proxy() already running
+        return
     }
-    
+
     // All retries failed
-    p.scaler.TrackAllFailed(targetHost, lastErr)
-    p.writeError(clientConn, 502, "All backends failed")
+    ps.sendError(clientConn, socks5RepFailure)
+}
+
+func (ps *ProxyServer) tryBackend(clientConn net.Conn, req *socks5Request, backend *Backend) (int, error) {
+    backendConn, err := net.DialTimeout("tcp", backend.Address, ps.config.ConnectTimeout)
+    if err != nil {
+        return 0, err
+    }
+    defer backendConn.Close()
+
+    // SOCKS5 handshake + CONNECT
+    if err := ps.forwardHandshake(clientConn, backendConn); err != nil {
+        return 0, err
+    }
+    if err := ps.forwardRequest(clientConn, backendConn, req); err != nil {
+        return 0, err
+    }
+    ps.sendSuccess(clientConn)
+
+    // [429 Detection] Peek first bytes with timeout
+    peekBuf := make([]byte, 512)
+    backendConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+    n, peekErr := backendConn.Read(peekBuf)
+    backendConn.SetReadDeadline(time.Time{})
+
+    if peekErr == nil && n > 0 {
+        if contains429(peekBuf[:n]) {
+            return 429, nil
+        }
+        // Forward peeked bytes to client
+        clientConn.Write(peekBuf[:n])
+    }
+
+    // Bidirectional copy
+    ps.proxy(clientConn, backendConn)
+    return 200, nil
 }
 ```
 
@@ -423,25 +533,28 @@ func (s *Scaler) scale(targetCount int, reason string) {
 
 ## Example Scenarios
 
-### Scenario 1: Rate Limit Hit
+### Scenario 1: Rate Limit Hit (with Peek Buffer)
 
 ```
-1. Client A → Backend 1 → Target → 429
-2. Client A → Backend 2 → Target → 200 ✅ (rotation works)
-3. No scaling needed
+1. Client A → Backend 1 → SOCKS5 CONNECT OK
+2. Peek 512 bytes → "HTTP/1.1 429 Too Many Requests"
+3. Return 429 to retry loop
+4. Client A → Backend 2 → SOCKS5 CONNECT OK
+5. Peek 512 bytes → "HTTP/1.1 200 OK" → Forward to client ✅
+6. No scaling needed
 
-4. Client B → Backend 1 → 429
-5. Client B → Backend 2 → 429
-6. Client B → Backend 3 → 429
-7. ALL backends returning 429
-8. Counter: 6 429s in 60s window
-9. Threshold: 10 → Not yet
+7. Client B → Backend 1 → 429 (peek detected)
+8. Client B → Backend 2 → 429 (peek detected)
+9. Client B → Backend 3 → 429 (peek detected)
+10. ALL backends returning 429
+11. Counter: 6 429s in 60s window
+12. Threshold: 10 → Not yet
 
-10. More requests... counter reaches 10
-11. ALL backends still 429
-12. SCALE UP → Add 1 container
-13. New container gets new IP
-14. Requests now succeed on new container ✅
+13. More requests... counter reaches 10
+14. ALL backends still 429
+15. SCALE UP → Add 1 container
+16. New container gets new IP
+17. Requests now succeed on new container ✅
 ```
 
 ### Scenario 2: Backend Failure
@@ -471,27 +584,11 @@ func (s *Scaler) scale(targetCount int, reason string) {
 ## Cooldown Logic
 
 ```go
-type CooldownManager struct {
-    mu       sync.RWMutex
-    lastTime map[string]time.Time  // trigger_name -> last_scale_time
-}
-
-func (c *CooldownManager) CanScale(triggerName string, cooldown time.Duration) bool {
-    c.mu.RLock()
-    defer c.mu.RUnlock()
-    
-    last, ok := c.lastTime[triggerName]
-    if !ok {
-        return true
+func (s *Scaler) evaluate() {
+    // Check cooldown
+    if time.Since(s.lastScale) < s.config.Scaling.Cooldown {
+        return
     }
-    
-    return time.Since(last) >= cooldown
-}
-
-func (c *CooldownManager) RecordScale(triggerName string) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    
-    c.lastTime[triggerName] = time.Now()
+    // ... rest of evaluation
 }
 ```

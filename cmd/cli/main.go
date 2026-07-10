@@ -8,10 +8,9 @@ import (
 	"strings"
 )
 
-const (
-	Version    = "0.3.0"
-	InstallDir = "/opt/warp-proxy-manager"
-)
+var Version = "dev"
+
+const InstallDir = "/opt/warp-proxy-manager"
 
 var reader = bufio.NewReader(os.Stdin)
 

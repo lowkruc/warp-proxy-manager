@@ -1,22 +1,26 @@
 .PHONY: build build-cli clean test fmt lint install uninstall
 
+# Get version from git tag, fallback to "dev"
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags "-X main.Version=$(VERSION)"
+
 # Build all
 all: build build-cli
 
 # Build manager
 build:
-	CGO_ENABLED=1 go build -o warp-proxy-manager ./cmd/manager/
+	CGO_ENABLED=1 go build $(LDFLAGS) -o warp-proxy-manager ./cmd/manager/
 
 # Build CLI
 build-cli:
-	go build -o warpctl ./cmd/cli/
+	go build $(LDFLAGS) -o warpctl ./cmd/cli/
 
 # Build for release (cross-compile)
 release:
-	GOOS=linux GOARCH=amd64 go build -o warpctl-linux-amd64 ./cmd/cli/
-	GOOS=linux GOARCH=arm64 go build -o warpctl-linux-arm64 ./cmd/cli/
-	GOOS=darwin GOARCH=amd64 go build -o warpctl-darwin-amd64 ./cmd/cli/
-	GOOS=darwin GOARCH=arm64 go build -o warpctl-darwin-arm64 ./cmd/cli/
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o warpctl-linux-amd64 ./cmd/cli/
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o warpctl-linux-arm64 ./cmd/cli/
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o warpctl-darwin-amd64 ./cmd/cli/
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o warpctl-darwin-arm64 ./cmd/cli/
 
 # Clean
 clean:
@@ -39,7 +43,7 @@ lint:
 install: build-cli
 	sudo cp warpctl /usr/local/bin/warpctl
 	sudo chmod +x /usr/local/bin/warpctl
-	@echo "✓ Installed warpctl to /usr/local/bin/warpctl"
+	@echo "✓ Installed warpctl $(VERSION) to /usr/local/bin/warpctl"
 
 # Uninstall CLI
 uninstall:

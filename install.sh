@@ -134,5 +134,6 @@ main() {
     echo "  warpctl start      Start the manager"
     echo "  warpctl help       Show all commands"
     echo ""
+}
 
 main "$@"

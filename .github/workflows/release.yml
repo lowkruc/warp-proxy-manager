@@ -36,14 +36,16 @@ jobs:
 
       - name: Build CLI binaries
         run: |
+          TAG=${{ github.ref_name }}
+          LDFLAGS="-s -w -X main.Version=${TAG}"
           # Linux amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o warpctl-linux-amd64 ./cmd/cli/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o warpctl-linux-amd64 ./cmd/cli/
           # Linux arm64
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o warpctl-linux-arm64 ./cmd/cli/
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o warpctl-linux-arm64 ./cmd/cli/
           # macOS amd64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o warpctl-darwin-amd64 ./cmd/cli/
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o warpctl-darwin-amd64 ./cmd/cli/
           # macOS arm64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o warpctl-darwin-arm64 ./cmd/cli/
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o warpctl-darwin-arm64 ./cmd/cli/
 
       - name: Test Go code
         run: go test ./...

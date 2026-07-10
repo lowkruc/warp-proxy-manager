@@ -83,7 +83,7 @@ download_binary() {
     BINARY_URL="https://github.com/$REPO/releases/download/$LATEST/warpctl-${OS}-${ARCH}"
     
     if [ "$LATEST" = "main" ]; then
-        BINARY_URL="https://github.com/$REPO/raw/main/warpctl-${OS}-${ARCH}"
+        BINARY_URL="https://github.com/$REPO/raw/master/warpctl-${OS}-${ARCH}"
     fi
     
     # Download

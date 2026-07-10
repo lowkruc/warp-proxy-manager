@@ -222,7 +222,6 @@ func TestHandshake(t *testing.T) {
 			auth:    true,
 			input:   []byte{0x05, 0x02, 0x00, 0x02, 0x01, 0x05, 'a', 'd', 'm', 'i', 'n', 0x05, '1', '2', '3', '4', '5'},
 			wantErr: false,
-			skip:    true, // TODO: fix mock Read for io.ReadFull partial reads
 		},
 	}
 
@@ -246,8 +245,14 @@ func TestHandshake(t *testing.T) {
 				if len(mock.Out) < 2 {
 					t.Fatalf("expected >=2 bytes output, got %d", len(mock.Out))
 				}
-				if mock.Out[1] != 0x00 {
-					t.Errorf("handshake() resp method = %x, want 0x00", mock.Out[1])
+				if tt.auth {
+					if mock.Out[1] != 0x02 {
+						t.Errorf("handshake() resp method = %x, want 0x02", mock.Out[1])
+					}
+				} else {
+					if mock.Out[1] != 0x00 {
+						t.Errorf("handshake() resp method = %x, want 0x00", mock.Out[1])
+					}
 				}
 			}
 		})

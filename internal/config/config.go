@@ -40,7 +40,7 @@ type AuthConfig struct {
 
 type User struct {
 	User string `yaml:"user"`
-	Pass string `yaml:"pass"` // bcrypt hash
+	Pass string `yaml:"pass"`
 }
 
 type TimeoutConfig struct {

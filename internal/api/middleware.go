@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -27,9 +28,21 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		// Check Bearer token
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			// For now, accept any non-empty token
-			// In production, validate JWT
 			if token == "" {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "Invalid token",
+				})
+				return
+			}
+			// Validate token against configured users
+			valid := false
+			for _, user := range cfg.Proxy.Auth.Users {
+				if subtle.ConstantTimeCompare([]byte(token), []byte(user.Pass)) == 1 {
+					valid = true
+					break
+				}
+			}
+			if !valid {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "Invalid token",
 				})
@@ -41,9 +54,15 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 
 		// Check Basic auth
 		if strings.HasPrefix(authHeader, "Basic ") {
-			decoded := strings.TrimPrefix(authHeader, "Basic ")
-			// Decode base64
-			parts := strings.SplitN(decoded, ":", 2)
+			encoded := strings.TrimPrefix(authHeader, "Basic ")
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "Invalid Basic auth encoding",
+				})
+				return
+			}
+			parts := strings.SplitN(string(decoded), ":", 2)
 			if len(parts) != 2 {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "Invalid Basic auth format",

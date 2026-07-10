@@ -426,21 +426,31 @@ func (ps *ProxyServer) handshake(conn net.Conn) error {
 }
 
 func (ps *ProxyServer) readUserPass(conn net.Conn) error {
-	buf := make([]byte, 1)
-	if _, err := io.ReadFull(conn, buf); err != nil {
+	// RFC 1929: VER(1) ULEN(1) UNAME(ulen) PLEN(1) PASSWD(plen)
+	ver := make([]byte, 1)
+	if _, err := io.ReadFull(conn, ver); err != nil {
 		return err
 	}
-	uLen := int(buf[0])
+	if ver[0] != 0x01 {
+		return fmt.Errorf("unsupported user/pass version: %d", ver[0])
+	}
+
+	ulen := make([]byte, 1)
+	if _, err := io.ReadFull(conn, ulen); err != nil {
+		return err
+	}
+	uLen := int(ulen[0])
 
 	username := make([]byte, uLen)
 	if _, err := io.ReadFull(conn, username); err != nil {
 		return err
 	}
 
-	if _, err := io.ReadFull(conn, buf); err != nil {
+	plen := make([]byte, 1)
+	if _, err := io.ReadFull(conn, plen); err != nil {
 		return err
 	}
-	pLen := int(buf[0])
+	pLen := int(plen[0])
 
 	password := make([]byte, pLen)
 	if _, err := io.ReadFull(conn, password); err != nil {

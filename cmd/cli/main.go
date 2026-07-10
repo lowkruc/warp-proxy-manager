@@ -32,8 +32,14 @@ func main() {
 		cmdStart()
 	case "stop":
 		cmdStop()
+	case "update":
+		cmdUpdate()
 	case "uninstall":
 		cmdUninstall()
+
+	// Settings
+	case "set":
+		cmdSet(args)
 
 	// API commands
 	case "status":
@@ -104,6 +110,7 @@ Lifecycle:
   warpctl init             Interactive setup
   warpctl start            Start the manager
   warpctl stop             Stop the manager
+  warpctl update           Update binary + images & recreate
   warpctl uninstall        Remove everything
 
 Container:
@@ -118,6 +125,12 @@ Monitor:
   warpctl health           Show health status
   warpctl metrics          Show current metrics
   warpctl history          Show scale history
+
+Settings:
+  warpctl set user         Manage users (add/remove/password/list)
+  warpctl set loadbalancer Set LB algorithm
+  warpctl set auth         Enable/disable auth
+  warpctl set scaling      Set min/max containers
 
 Options:
   -h, --help              Show help

@@ -117,26 +117,27 @@ func cmdInit() {
 
 	// Write files
 	fmt.Println()
-	if err := os.MkdirAll(InstallDir, 0755); err != nil {
+	installDir := resolveInstallDir()
+	if err := os.MkdirAll(installDir, 0755); err != nil {
 		fmt.Printf("Error creating directory: %v\n", err)
 		os.Exit(1)
 	}
-	if err := os.MkdirAll(filepath.Join(InstallDir, "data"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(installDir, "data"), 0755); err != nil {
 		fmt.Printf("Error creating data directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(filepath.Join(InstallDir, "config.yaml"), []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(installDir, "config.yaml"), []byte(configContent), 0644); err != nil {
 		fmt.Printf("Error writing config: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✓ Config written to %s/config.yaml\n", InstallDir)
+	fmt.Printf("✓ Config written to %s/config.yaml\n", installDir)
 
-	if err := os.WriteFile(filepath.Join(InstallDir, "docker-compose.yml"), []byte(dockerCompose), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(installDir, "docker-compose.yml"), []byte(dockerCompose), 0644); err != nil {
 		fmt.Printf("Error writing docker-compose: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✓ Docker Compose written to %s/docker-compose.yml\n", InstallDir)
+	fmt.Printf("✓ Docker Compose written to %s/docker-compose.yml\n", installDir)
 
 	fmt.Println()
 	fmt.Println("═══════════════════════════════════════")
@@ -174,7 +175,8 @@ func promptScalingConfig() (min, max, cooldown string) {
 	fmt.Println("\n--- Scaling ---")
 	min = prompt("Min containers", "3")
 	max = prompt("Max containers", "10")
-	cooldown = prompt("Cooldown", "60s")
+	cooldown = prompt("Cooldown (seconds)", "60")
+	cooldown = ensureSuffix(cooldown, "s")
 	return
 }
 
@@ -228,7 +230,8 @@ func triggerConnection(minContainers, maxContainers string) ScaleTrigger {
 
 	threshold := prompt("Average connections threshold", "100")
 	scaleCount := prompt("Containers to add/remove", "2")
-	cooldown := prompt("Cooldown", "120s")
+	cooldown := prompt("Cooldown (seconds)", "120")
+	cooldown = ensureSuffix(cooldown, "s")
 
 	name := fmt.Sprintf("conn_%s", direction)
 	if direction == "up" {
@@ -249,9 +252,11 @@ func triggerConnection(minContainers, maxContainers string) ScaleTrigger {
 
 func trigger429() ScaleTrigger {
 	threshold := prompt("429 count threshold", "10")
-	window := prompt("Time window", "60s")
+	window := prompt("Time window (seconds)", "60")
+	window = ensureSuffix(window, "s")
 	scaleCount := prompt("Containers to add", "1")
-	cooldown := prompt("Cooldown", "120s")
+	cooldown := prompt("Cooldown (seconds)", "120")
+	cooldown = ensureSuffix(cooldown, "s")
 	allBackends := promptYesNo("Require all backends affected?", false)
 
 	return ScaleTrigger{
@@ -270,9 +275,11 @@ func trigger429() ScaleTrigger {
 func trigger5xx() ScaleTrigger {
 	code := prompt("Response code", "502")
 	threshold := prompt("Error count threshold", "20")
-	window := prompt("Time window", "60s")
+	window := prompt("Time window (seconds)", "60")
+	window = ensureSuffix(window, "s")
 	scaleCount := prompt("Containers to add", "1")
-	cooldown := prompt("Cooldown", "120s")
+	cooldown := prompt("Cooldown (seconds)", "120")
+	cooldown = ensureSuffix(cooldown, "s")
 
 	return ScaleTrigger{
 		Name:           "server_error",
@@ -458,7 +465,27 @@ networks:
 `, apiPort, apiPort, socksPort, socksPort, dockerHost, dockerTLSCert)
 }
 
+func resolveInstallDir() string {
+	// Try /opt first
+	if err := os.MkdirAll(InstallDir, 0755); err == nil {
+		return InstallDir
+	}
+
+	// Fallback to ~/.warp-proxy-manager
+	home, _ := os.UserHomeDir()
+	fallback := filepath.Join(home, ".warp-proxy-manager")
+	fmt.Printf("Using user directory: %s\n", fallback)
+	return fallback
+}
+
 // Helpers
+func ensureSuffix(s, suffix string) string {
+	if !strings.HasSuffix(s, suffix) {
+		return s + suffix
+	}
+	return s
+}
+
 func parseFloat(s string) float64 {
 	var f float64
 	fmt.Sscanf(s, "%f", &f)

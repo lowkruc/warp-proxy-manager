@@ -9,10 +9,10 @@ import (
 )
 
 func cmdStart() {
-	ensureInitialized()
+	dir := ensureInitialized()
 
 	fmt.Println("Starting Warp Proxy Manager...")
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(InstallDir, "docker-compose.yml"), "up", "-d")
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(dir, "docker-compose.yml"), "up", "-d")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -21,15 +21,40 @@ func cmdStart() {
 	}
 	fmt.Println("✓ Started")
 	fmt.Println()
-	fmt.Println("API: http://localhost:8080")
-	fmt.Println("SOCKS5: localhost:1080")
+
+	// Read ports from config
+	apiPort, socksPort := readPortsFromConfig(dir)
+	fmt.Printf("API: http://localhost:%s\n", apiPort)
+	fmt.Printf("SOCKS5: localhost:%s\n", socksPort)
+}
+
+func readPortsFromConfig(dir string) (apiPort, socksPort string) {
+	apiPort = "8080"
+	socksPort = "1080"
+
+	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "api_port:") {
+			apiPort = strings.TrimSpace(strings.TrimPrefix(line, "api_port:"))
+		} else if strings.HasPrefix(line, "listen:") {
+			socksPort = strings.TrimSpace(strings.TrimPrefix(line, "listen:"))
+			socksPort = strings.Trim(socksPort, `\"	 :`)
+		}
+	}
+	return
 }
 
 func cmdStop() {
-	ensureInitialized()
+	dir := ensureInitialized()
 
 	fmt.Println("Stopping Warp Proxy Manager...")
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(InstallDir, "docker-compose.yml"), "down")
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(dir, "docker-compose.yml"), "down")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -40,7 +65,7 @@ func cmdStop() {
 }
 
 func cmdUninstall() {
-	ensureInitialized()
+	dir := ensureInitialized()
 
 	fmt.Println("═══════════════════════════════════════")
 	fmt.Println("   Warp Proxy Manager Uninstall")
@@ -55,7 +80,7 @@ func cmdUninstall() {
 
 	// Stop containers
 	fmt.Println("\nStopping containers...")
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(InstallDir, "docker-compose.yml"), "down", "-v")
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(dir, "docker-compose.yml"), "down", "-v")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
@@ -72,8 +97,8 @@ func cmdUninstall() {
 	}
 
 	// Remove install directory
-	fmt.Printf("Removing %s...\n", InstallDir)
-	os.RemoveAll(InstallDir)
+	fmt.Printf("Removing %s...\n", dir)
+	os.RemoveAll(dir)
 
 	// Remove binary
 	binaryPath, _ := exec.LookPath("warpctl")
@@ -87,9 +112,27 @@ func cmdUninstall() {
 	fmt.Println("  Docker images not removed (run 'docker image prune' to clean)")
 }
 
-func ensureInitialized() {
-	if _, err := os.Stat(filepath.Join(InstallDir, "docker-compose.yml")); os.IsNotExist(err) {
+func findInstallDir() string {
+	// Try /opt first
+	if _, err := os.Stat(filepath.Join(InstallDir, "docker-compose.yml")); err == nil {
+		return InstallDir
+	}
+
+	// Try ~/.warp-proxy-manager
+	home, _ := os.UserHomeDir()
+	userDir := filepath.Join(home, ".warp-proxy-manager")
+	if _, err := os.Stat(filepath.Join(userDir, "docker-compose.yml")); err == nil {
+		return userDir
+	}
+
+	return ""
+}
+
+func ensureInitialized() string {
+	dir := findInstallDir()
+	if dir == "" {
 		fmt.Println("Not initialized. Run 'warpctl init' first.")
 		os.Exit(1)
 	}
+	return dir
 }

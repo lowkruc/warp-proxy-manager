@@ -118,30 +118,21 @@ download_binary() {
     echo -e "${GREEN}✓ Installed warpctl to ${INSTALL_DIR}/${BINARY_NAME}${NC}"
 }
 
-run_init() {
-    echo -e "\n${YELLOW}Running setup...${NC}\n"
-    warpctl init
-}
-
 main() {
     print_banner
     check_prerequisites
     detect_os
     download_binary
-    run_init
     
-    echo -e "\n${GREEN}================================${NC}"
+    echo ""
+    echo -e "${GREEN}================================${NC}"
     echo -e "${GREEN}  Installation complete!${NC}"
     echo -e "${GREEN}================================${NC}"
     echo ""
-    echo "Quick start:"
+    echo "Next steps:"
+    echo "  warpctl init       Interactive setup"
     echo "  warpctl start      Start the manager"
-    echo "  warpctl status     Check status"
     echo "  warpctl help       Show all commands"
     echo ""
-    echo "SOCKS5 proxy: localhost:1080"
-    echo "API:          http://localhost:8080"
-    echo ""
-}
 
 main "$@"

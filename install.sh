@@ -14,12 +14,13 @@ INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="warpctl"
 
 print_banner() {
-    echo -e "${BLUE}"
-    echo " ╦╔╗╔╔╦╗╔═╗╦═╗╔╦╗╔═╗╔═╗╔═╗ ╔═╗╔═╗╔═╗╔═╗╔╗ ╔═╗╔╦╗"
-    echo " ║║║║ ║ ║╣ ╠╦╝║║║╠═╣║  ╚═╗ ╠═╣║  ║ ║║╣ ╠╩╗║ ║ ║ ║"
-    echo " ╩╝╚╝ ╩ ╚═╝╩╚═╩ ╩╩ ╩╚═╝╚═╝ ╩ ╩╚═╝╚═╝╚═╝╚═╝╚═╝ ╩ "
-    echo -e "${NC}"
-    echo -e "${GREEN}  Installer${NC}"
+    echo ""
+    echo "  ╦╔╗╔╔╦╗╔═╗╦═╗╔╦╗╔═╗╔═╗╔═╗ ╔═╗╔═╗╔═╗╔═╗╔╗ ╔═╗╔╦╗"
+    echo "  ║║║║ ║ ║╣ ╠╦╝║║║╠═╣║  ╚═╗ ╠═╣║  ║ ║║╣ ╠╩╗║ ║ ║ ║"
+    echo "  ╩╝╚╝ ╩ ╚═╝╩╚═╩ ╩╩ ╩╚═╝╚═╝ ╩ ╩╚═╝╚═╝╚═╝╚═╝╚═╝ ╩ "
+    echo ""
+    echo "  Installer"
+    echo ""
 }
 
 check_prerequisites() {
@@ -45,7 +46,7 @@ check_prerequisites() {
     ARCH=$(uname -m)
     case $ARCH in
         x86_64)  ARCH="amd64" ;;
-        aarch64) ARCH="arm64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
         armv7l)  ARCH="armv7" ;;
         *)
             echo -e "${RED}Error: Unsupported architecture: $ARCH${NC}"

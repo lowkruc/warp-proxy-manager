@@ -12,7 +12,7 @@
 
 <br />
 
-[Features](#-features) · [Quick Start](#-quick-start) · [Architecture](#-architecture) · [Configuration](#-configuration) · [API](#-api) · [Contributing](#-contributing) · [Support](#-support)
+[Features](#-features) · [Quick Start](#-quick-start) · [CLI](#-cli) · [Architecture](#-architecture) · [Configuration](#-configuration) · [API](#-api) · [Development](#-development)
 
 ---
 
@@ -35,32 +35,87 @@
 
 ## 📦 Quick Start
 
-### Docker Compose (recommended)
+### One-line Install (recommended)
 
 ```bash
+curl -sSL https://raw.githubusercontent.com/lowkruc/warp-proxy-manager/master/install.sh | bash
+```
+
+This will:
+1. Check prerequisites (Docker)
+2. Download `warpctl` CLI to `/usr/local/bin/`
+3. Run interactive setup (ports, scaling, triggers, etc.)
+4. Generate config + docker-compose
+5. Start the manager
+
+### Manual Install
+
+```bash
+# Clone and build
 git clone https://github.com/lowkruc/warp-proxy-manager.git
 cd warp-proxy-manager
+go build -o warpctl ./cmd/cli/
 
-# Edit config
-cp config.example.yaml config.yaml
-# ... edit config.yaml ...
+# Move to PATH
+sudo mv warpctl /usr/local/bin/
 
-# Run
-docker compose up -d
+# Initialize
+warpctl init
+
+# Start
+warpctl start
 ```
 
 ### Verify
 
 ```bash
+# Check status
+warpctl status
+
 # Health check
 curl http://localhost:8080/health
 
 # Test SOCKS5
 curl --socks5-hostname localhost:1080 https://ifconfig.me
-
-# List containers
-curl http://localhost:8080/api/v1/containers
 ```
+
+## 🖥️ CLI
+
+### Lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `warpctl init` | Interactive setup — generates config + docker-compose |
+| `warpctl start` | Start the manager (`docker compose up -d`) |
+| `warpctl stop` | Stop the manager (`docker compose down`) |
+| `warpctl uninstall` | Remove everything (containers, config, binary) |
+
+### Container Management
+
+| Command | Description |
+|---------|-------------|
+| `warpctl containers` | List all warp-proxy containers |
+| `warpctl create` | Create a new container |
+| `warpctl scale <n>` | Scale to N containers |
+| `warpctl restart <id>` | Restart a container |
+| `warpctl delete <id>` | Delete a container |
+
+### Monitoring
+
+| Command | Description |
+|---------|-------------|
+| `warpctl status` | Show proxy statistics |
+| `warpctl health` | Show health status |
+| `warpctl metrics` | Show current metrics |
+| `warpctl history` | Show scaling history |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WARP_MANAGER_HOST` | `localhost` | API host |
+| `WARP_MANAGER_PORT` | `8080` | API port |
+| `WARP_TOKEN` | | Auth token (if enabled) |
 
 ## 🏗️ Architecture
 
@@ -104,6 +159,8 @@ Each warp-proxy container:
 
 ## ⚙️ Configuration
 
+The `warpctl init` command generates config interactively. Here's the full reference:
+
 ```yaml
 manager:
   api_port: 8080
@@ -115,7 +172,7 @@ proxy:
     enabled: false
     users:
       - user: admin
-        pass: "$2a$10$..."  # bcrypt hash
+        pass: "your-password"
   timeout:
     connect: 5s
     idle: 30s
@@ -125,6 +182,7 @@ scaling:
   max: 10
   cooldown: 60s
   triggers:
+    # Scale up on high connections
     - name: high_connections
       type: connection
       threshold: 100
@@ -132,6 +190,7 @@ scaling:
       scale_count: 2
       cooldown: 120s
 
+    # Scale down on low connections
     - name: low_connections
       type: connection
       threshold: 20
@@ -139,6 +198,7 @@ scaling:
       scale_count: 1
       cooldown: 300s
 
+    # Scale up on 429 rate limits
     - name: rate_limit
       type: response_code
       response_code: 429
@@ -161,13 +221,11 @@ docker:
   network: "warp-net"
   prefix: "warp-proxy"
   memory_limit: "150m"
-  cpu_limit: "0.1"
+  cpu_limit: "0.15"
   env:
     WARP_SLEEP: "5"
     WARP_ROTATION_INTERVAL: "60"
 ```
-
-> See [`config.example.yaml`](config.example.yaml) for full reference.
 
 ## 🔌 API
 
@@ -191,18 +249,30 @@ docker:
 ## 🛠️ Development
 
 ```bash
-# Build
-go build -o warp-proxy-manager ./cmd/manager/
-go build -o warpctl ./cmd/cli/
+# Build all
+make build build-cli
+
+# Build for release (cross-compile)
+make release
 
 # Run tests
 go test ./...
 
-# Run locally
-./warp-proxy-manager -config config.yaml
+# Format
+make fmt
 
-# Docker
-docker compose up -d
+# Lint
+make lint
+```
+
+### Install/Uninstall CLI
+
+```bash
+# Install CLI to /usr/local/bin
+make install
+
+# Remove CLI from /usr/local/bin
+make uninstall
 ```
 
 ## 🤝 Contributing

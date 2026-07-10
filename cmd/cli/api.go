@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,9 +17,30 @@ func getBaseURL() string {
 	}
 	port := os.Getenv("WARP_MANAGER_PORT")
 	if port == "" {
-		port = "8080"
+		port = readPortFromConfig()
 	}
 	return fmt.Sprintf("http://%s:%s", host, port)
+}
+
+func readPortFromConfig() string {
+	dir := findInstallDir()
+	if dir == "" {
+		return "8080"
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		return "8080"
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "api_port:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "api_port:"))
+		}
+	}
+	return "8080"
 }
 
 func apiGet(path string) ([]byte, error) {

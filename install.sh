@@ -75,14 +75,14 @@ download_binary() {
     
     if [ -z "$LATEST" ]; then
         echo -e "${RED}Error: Could not fetch latest release${NC}"
-        echo "Falling back to main branch..."
-        LATEST="main"
+        echo "Falling back to master branch..."
+        LATEST="master"
     fi
     
     # Construct download URL
     BINARY_URL="https://github.com/$REPO/releases/download/$LATEST/warpctl-${OS}-${ARCH}"
     
-    if [ "$LATEST" = "main" ]; then
+    if [ "$LATEST" = "master" ]; then
         BINARY_URL="https://github.com/$REPO/raw/master/warpctl-${OS}-${ARCH}"
     fi
     

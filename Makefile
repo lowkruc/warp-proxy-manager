@@ -1,4 +1,4 @@
-.PHONY: build clean run test docker docker-down
+.PHONY: build build-cli clean test fmt lint install uninstall
 
 # Build all
 all: build build-cli
@@ -11,42 +11,21 @@ build:
 build-cli:
 	go build -o warpctl ./cmd/cli/
 
+# Build for release (cross-compile)
+release:
+	GOOS=linux GOARCH=amd64 go build -o warpctl-linux-amd64 ./cmd/cli/
+	GOOS=linux GOARCH=arm64 go build -o warpctl-linux-arm64 ./cmd/cli/
+	GOOS=darwin GOARCH=amd64 go build -o warpctl-darwin-amd64 ./cmd/cli/
+	GOOS=darwin GOARCH=arm64 go build -o warpctl-darwin-arm64 ./cmd/cli/
+
 # Clean
 clean:
-	rm -f warp-proxy-manager warpctl
+	rm -f warp-proxy-manager warpctl warpctl-*
 	rm -rf data/
-
-# Docker build
-docker:
-	docker compose build
-
-# Docker run
-docker-up:
-	docker compose up -d
-
-# Docker stop
-docker-down:
-	docker compose down
-
-# Docker logs
-docker-logs:
-	docker compose logs -f
-
-# Run
-run: build
-	./warp-proxy-manager -config config.yaml
-
-# Run in background
-run-bg: build
-	./warp-proxy-manager -config config.yaml &
 
 # Test
 test:
 	go test ./...
-
-# Dev mode
-dev:
-	go run ./cmd/manager/ -config config.yaml
 
 # Format
 fmt:
@@ -56,10 +35,17 @@ fmt:
 lint:
 	golangci-lint run
 
-# Docker build
-docker:
-	docker build -t warp-proxy-manager .
+# Install CLI to /usr/local/bin
+install: build-cli
+	sudo cp warpctl /usr/local/bin/warpctl
+	sudo chmod +x /usr/local/bin/warpctl
+	@echo "✓ Installed warpctl to /usr/local/bin/warpctl"
 
-# Create data dir
-data:
-	mkdir -p data
+# Uninstall CLI
+uninstall:
+	sudo rm -f /usr/local/bin/warpctl
+	@echo "✓ Removed warpctl from /usr/local/bin"
+
+# Quick install (curl one-liner)
+quick-install:
+	@echo "curl -sSL https://raw.githubusercontent.com/lowkruc/warp-proxy-manager/main/install.sh | bash"

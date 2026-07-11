@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log"
 	"net"

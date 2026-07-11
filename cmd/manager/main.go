@@ -85,6 +85,7 @@ func main() {
 	// Initialize health checker
 	healthChecker := proxy.NewHealthChecker(
 		balancer,
+		dockerClient,
 		cfg.LoadBalancer.HealthCheck.Interval,
 		cfg.LoadBalancer.HealthCheck.Timeout,
 		cfg.LoadBalancer.HealthCheck.UnhealthyThreshold,

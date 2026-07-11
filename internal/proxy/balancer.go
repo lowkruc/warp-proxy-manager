@@ -9,14 +9,15 @@ import (
 )
 
 type Backend struct {
-	ID            string
-	Name          string
-	Address       string  // host:port
-	Port          int
-	Healthy       bool
-	Connections   int64
-	LastHealth    time.Time
-	ConsecutiveOK int
+	ID             string
+	Name           string
+	Address        string  // host:port
+	Port           int
+	Healthy        bool
+	Connections    int64
+	LastHealth     time.Time
+	ConsecutiveOK  int
+	ConsecutiveFail int
 }
 
 type LoadBalancer struct {
